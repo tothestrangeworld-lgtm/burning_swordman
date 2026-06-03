@@ -1,6 +1,7 @@
 // src/lib/api.ts
 // =====================================================================
 // 燃えよ剣士 - GAS APIクライアント & SWRフック
+// Phase 5: 全体評価（一括評価）API追加
 // =====================================================================
 
 import useSWR, { SWRConfiguration, SWRResponse } from 'swr';
@@ -118,7 +119,7 @@ export async function saveLogApi(
   });
 }
 
-// ★ 追加：record/page.tsx から呼びやすい便利ラッパー
+// ★ record/page.tsx から呼びやすい便利ラッパー
 //    ログインユーザーを内部で取得してuser_idを自動付与する
 export async function saveLog(
   payload: SaveLogPayload,
@@ -144,7 +145,7 @@ export async function evaluateStudentApi(
   });
 }
 
-// ★ 追加：先生画面から呼びやすい便利ラッパー
+// ★ 先生画面から呼びやすい便利ラッパー（個別評価）
 export async function evaluateStudent(
   payload: TeacherEvalPayload,
 ): Promise<TeacherEvalResponse> {
@@ -156,6 +157,107 @@ export async function evaluateStudent(
   return evaluateStudentApi({
     ...rest,
     teacher_id: me.id,
+  });
+}
+
+// =====================================================================
+// ★★★ Phase 5 追加: 全体評価（一括評価）API ★★★
+// =====================================================================
+
+/**
+ * 全体評価（一括評価）リクエストの型定義
+ */
+export interface BulkEvalPayload {
+  /** 評価対象の生徒IDの配列（チェックボックスで選択された生徒） */
+  student_ids: string[];
+  /** 課題ごとの評価（全選択生徒に同じ評価を一括適用） */
+  evaluations: Array<{
+    task_id: string;
+    score:   number;       // 1〜5
+    comment?: string;      // 任意（30文字以内）
+  }>;
+}
+
+/**
+ * 全体評価レスポンスの型定義
+ */
+export interface BulkEvalResponse {
+  /** 処理が成功した生徒数 */
+  processed_count: number;
+  /** 失敗した生徒数 */
+  failed_count: number;
+  /** 失敗した生徒の詳細（エラー理由） */
+  failures: Array<{
+    student_id: string;
+    reason:     string;
+  }>;
+  /** 各生徒に付与した経験値の合計 */
+  total_xp_granted: number;
+  /** 1人あたりに付与した経験値（参考表示用） */
+  xp_per_student: number;
+  /** 1件の評価あたりのXP倍率（5倍） */
+  multiplier: number;
+  /** 評価された課題数 */
+  evaluated_count: number;
+  /** 生徒ごとの評価結果サマリ */
+  results: Array<{
+    student_id:    string;
+    student_name:  string;
+    xp_granted:    number;
+    new_total_xp:  number;
+    new_level:     number;
+    skipped_count: number;     // 二重評価でスキップされた件数
+  }>;
+}
+
+/**
+ * 内部API: GASに対して bulk-evaluate を投げる
+ */
+export async function evaluateBulkStudentsApi(
+  payload: BulkEvalPayload & { teacher_id: string },
+): Promise<BulkEvalResponse> {
+  return gasPost<BulkEvalResponse>({
+    action: 'evaluateBulkStudents',
+    ...payload,
+  });
+}
+
+/**
+ * 公開ラッパー: 全体評価ページから呼びやすい関数
+ * ログイン中の先生IDを内部で自動付与する
+ *
+ * 例:
+ *   await evaluateBulkStudents({
+ *     student_ids: ['U001', 'U002'],
+ *     evaluations: [
+ *       { task_id: 'K001', score: 5 },
+ *       { task_id: 'K002', score: 4, comment: 'よくがんばった' },
+ *     ],
+ *   });
+ */
+export async function evaluateBulkStudents(
+  payload: BulkEvalPayload,
+): Promise<BulkEvalResponse> {
+  const me = getAuthUser();
+  if (!me || me.role !== 'teacher') {
+    throw new Error('先生としてログインしていません');
+  }
+
+  // 入力バリデーション（早期失敗で無駄な通信を防ぐ）
+  if (!Array.isArray(payload.student_ids) || payload.student_ids.length === 0) {
+    throw new Error('評価する生徒を1人以上選択してください');
+  }
+  if (!Array.isArray(payload.evaluations) || payload.evaluations.length === 0) {
+    throw new Error('評価する課題を1つ以上選んでください');
+  }
+
+  // 重複student_idを除去
+  const uniqueIds = Array.from(new Set(payload.student_ids));
+
+  return evaluateBulkStudentsApi({
+    teacher_id:  me.id,
+    student_ids: uniqueIds,
+    evaluations: payload.evaluations,
   });
 }
 

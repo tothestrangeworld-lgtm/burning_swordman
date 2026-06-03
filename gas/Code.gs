@@ -2,12 +2,14 @@
 // 燃えよ剣士 - GAS Backend (Code.gs)
 // Phase 1.5: 初期化 + 取得系API + 更新系API + ルーティング
 // Phase 4.1: getUserList (公開ログイン用) を追加
+// Phase 5.0: evaluateBulkStudents（全体評価/一括評価）API追加
 // =====================================================================
 
 const SS_ID = PropertiesService.getScriptProperties().getProperty('SHEET_ID');
 
 // 経験値計算定数
-const TEACHER_EVAL_MULTIPLIER = 10;
+const TEACHER_EVAL_MULTIPLIER = 10;  // 個別評価倍率
+const BULK_EVAL_MULTIPLIER    = 5;   // ★ 全体評価倍率（Phase 5）
 const SELF_TASK_XP_PER_SCORE  = 5;
 const TECHNIQUE_XP_FACTOR     = 3;
 const MAX_LEVEL               = 50;
@@ -149,7 +151,6 @@ function doGet(e) {
     let result;
 
     switch (action) {
-      // ★ Phase 4.1 追加：ログイン用のユーザー一覧（公開）
       case 'getUserList':
         result = getUserList();
         break;
@@ -186,7 +187,7 @@ function doPost(e) {
     let result;
 
     switch (action) {
-      case 'login':                              // ★ Phase 2 追加
+      case 'login':
         result = login(payload);
         break;
       case 'saveLog':
@@ -194,6 +195,10 @@ function doPost(e) {
         break;
       case 'evaluateStudent':
         result = evaluateStudent(payload);
+        break;
+      // ★ Phase 5.0 追加：全体評価（一括評価）
+      case 'evaluateBulkStudents':
+        result = evaluateBulkStudents(payload);
         break;
       default:
         throw new Error('未知のアクション: ' + action);
@@ -348,7 +353,7 @@ function saveLog(payload) {
 }
 
 // =====================================================================
-// 2. evaluateStudent : 先生からの評価
+// 2. evaluateStudent : 先生からの個別評価（10倍XP）
 // =====================================================================
 function evaluateStudent(payload) {
   const teacherId = payload.teacher_id;
@@ -414,6 +419,269 @@ function evaluateStudent(payload) {
     evaluated_count:  evaluatedCount,
     skipped_task_ids: skippedTaskIds,
     newAchievements:  newAchievements,
+  };
+}
+
+// =====================================================================
+// ★★★ Phase 5.0 追加：evaluateBulkStudents 全体評価（一括評価/5倍XP） ★★★
+// =====================================================================
+//
+// 仕様：
+//  - 複数生徒を一度に評価（チェックボックスで選択された生徒）
+//  - XP倍率は5倍（個別評価10倍の半分）
+//  - 二重評価防止：今日この先生が同じ生徒の同じ課題を評価済みならスキップ
+//  - パフォーマンス: 全シート読み込みを1回にまとめ、書き込みは setValues で一括
+//  - エラーハンドリング: 個別生徒の失敗は他生徒の処理を止めず、failures に記録
+//
+// パフォーマンス指針：
+//  N人 × M課題 = N×M件のレコードを task_logs に追加するが、
+//  appendRow を N×M回呼ぶと激遅なので、setValues で一括書き込みする。
+//  user_status の更新もまとめて行う。
+// =====================================================================
+function evaluateBulkStudents(payload) {
+  // ====== 1. パラメータ検証 ======
+  const teacherId  = payload.teacher_id;
+  const studentIds = payload.student_ids;
+
+  if (!teacherId) throw new Error('teacher_idが指定されていません');
+  if (!Array.isArray(studentIds) || studentIds.length === 0) {
+    throw new Error('生徒IDの配列が空です');
+  }
+  if (!Array.isArray(payload.evaluations) || payload.evaluations.length === 0) {
+    throw new Error('evaluationsが空です');
+  }
+
+  const teacher = _getUser_(teacherId);
+  if (!teacher || teacher.role !== 'teacher') {
+    throw new Error('先生権限がありません');
+  }
+
+  // 評価データの事前バリデーション（1度で全部チェック）
+  payload.evaluations.forEach(ev => {
+    _validateScore_(ev.score);
+    if (!ev.task_id) throw new Error('task_idが空の評価データがあります');
+  });
+
+  // ====== 2. 一括取得（パフォーマンス最適化の要） ======
+  const now   = _nowStr_();
+  const today = _todayStr_();
+
+  // 全ユーザー情報を1回で取得（生徒名解決＆権限チェック用）
+  const allUsersMap = _getAllUsersMap_();
+
+  // user_status シートの全データを1回で読む（個別アクセス回避）
+  const userStatusSheet = _sheet_('user_status');
+  const userStatusData  = userStatusSheet.getDataRange().getValues();
+  const userStatusRowMap = {}; // userId -> { rowIndex, total_xp, level, ... }
+  for (let i = 1; i < userStatusData.length; i++) {
+    const uid = userStatusData[i][0];
+    if (!uid) continue;
+    userStatusRowMap[uid] = {
+      rowIndex:           i + 1, // シート上の行番号（1-indexed）
+      total_xp:           Number(userStatusData[i][1]) || 0,
+      level:              Number(userStatusData[i][2]) || 1,
+      last_practice_date: userStatusData[i][3] || '',
+      last_decay_date:    userStatusData[i][4] || '',
+      favorite_technique: userStatusData[i][5] || '',
+      catchphrase:        userStatusData[i][6] || '',
+    };
+  }
+
+  // task_logs の全データを1回で読む（二重評価チェック用）
+  const taskLogSheet = _sheet_('task_logs');
+  const taskLogData  = taskLogSheet.getDataRange().getValues();
+
+  // 今日この先生が評価済みのキー：Set<"studentId|taskId">
+  const todayEvaluatedKeySet = new Set();
+  for (let i = 1; i < taskLogData.length; i++) {
+    const logUserId      = taskLogData[i][0];
+    const logDateStr     = String(taskLogData[i][1]).slice(0, 10);
+    const logTaskId      = taskLogData[i][2];
+    const logEvaluatorId = taskLogData[i][5];
+    if (logEvaluatorId === teacherId && logDateStr === today) {
+      todayEvaluatedKeySet.add(logUserId + '|' + logTaskId);
+    }
+  }
+
+  // ====== 3. 各生徒について評価処理（メモリ上で計算） ======
+  const newTaskLogRows = [];   // task_logs に追記する行（一括書き込み用）
+  const newXpHistoryRows = []; // xp_history に追記する行
+  const userStatusUpdates = []; // user_status の更新リスト
+  const results = [];           // 各生徒の処理結果サマリ
+  const failures = [];          // 失敗した生徒
+  let totalXpGrantedAll = 0;
+  let processedCount = 0;
+
+  // 重複student_idを除去
+  const uniqueStudentIds = Array.from(new Set(studentIds));
+
+  uniqueStudentIds.forEach(studentId => {
+    try {
+      // 生徒の存在＆ロール確認
+      const student = allUsersMap[studentId];
+      if (!student) {
+        failures.push({ student_id: studentId, reason: '生徒が見つかりません' });
+        return;
+      }
+      if (student.role !== 'student') {
+        failures.push({ student_id: studentId, reason: '対象が生徒ではありません' });
+        return;
+      }
+
+      // この生徒に対する評価をループ
+      let xpForThisStudent = 0;
+      let evalCountForThisStudent = 0;
+      let skippedCountForThisStudent = 0;
+
+      payload.evaluations.forEach(ev => {
+        const dedupeKey = studentId + '|' + ev.task_id;
+        if (todayEvaluatedKeySet.has(dedupeKey)) {
+          skippedCountForThisStudent++;
+          return; // 二重評価スキップ
+        }
+
+        // ★ XP計算（5倍）
+        const xp = ev.score * SELF_TASK_XP_PER_SCORE * BULK_EVAL_MULTIPLIER;
+        xpForThisStudent += xp;
+        evalCountForThisStudent++;
+
+        const comment = (ev.comment || '').toString().slice(0, 30);
+
+        // task_logs に追加する行を蓄積
+        newTaskLogRows.push([
+          studentId, now, ev.task_id, ev.score, xp, teacherId, comment,
+        ]);
+
+        // 重複防止のため、処理済みキーとして登録
+        todayEvaluatedKeySet.add(dedupeKey);
+      });
+
+      // この生徒のステータス更新計算（メモリ上）
+      let currentStatus = userStatusRowMap[studentId];
+      let needNewRow = false;
+      if (!currentStatus) {
+        // user_status に未登録 → 新規行として追加予定
+        needNewRow = true;
+        currentStatus = {
+          rowIndex:           -1,
+          total_xp:           0,
+          level:              1,
+          last_practice_date: '',
+          last_decay_date:    '',
+          favorite_technique: '',
+          catchphrase:        '',
+        };
+      }
+
+      const newTotalXp = Math.max(0, currentStatus.total_xp + xpForThisStudent);
+      const newLevel   = _calcLevelFromXp_(newTotalXp);
+
+      userStatusUpdates.push({
+        studentId:    studentId,
+        rowIndex:     currentStatus.rowIndex,
+        needNewRow:   needNewRow,
+        newTotalXp:   newTotalXp,
+        newLevel:     newLevel,
+        prevDate:     currentStatus.last_practice_date,
+        prevDecay:    currentStatus.last_decay_date,
+        prevFavTech:  currentStatus.favorite_technique,
+        prevCatch:    currentStatus.catchphrase,
+      });
+
+      // xp_history に追加する行を蓄積
+      if (xpForThisStudent > 0) {
+        newXpHistoryRows.push([
+          studentId,
+          now,
+          'teacher_bulk_eval',
+          xpForThisStudent,
+          `先生「${teacher.name}」から全体評価！（${evalCountForThisStudent}件・×${BULK_EVAL_MULTIPLIER}倍）`,
+          newTotalXp,
+          newLevel,
+        ]);
+      }
+
+      // メモリ上の userStatusRowMap も更新（後続処理に影響しないように）
+      userStatusRowMap[studentId] = Object.assign({}, currentStatus, {
+        total_xp: newTotalXp,
+        level:    newLevel,
+      });
+
+      results.push({
+        student_id:    studentId,
+        student_name:  student.name,
+        xp_granted:    xpForThisStudent,
+        new_total_xp:  newTotalXp,
+        new_level:     newLevel,
+        skipped_count: skippedCountForThisStudent,
+      });
+
+      totalXpGrantedAll += xpForThisStudent;
+      processedCount++;
+
+    } catch (e) {
+      // 個別生徒のエラーは記録して続行
+      failures.push({
+        student_id: studentId,
+        reason:     e.message || '不明なエラー',
+      });
+    }
+  });
+
+  // ====== 4. 一括書き込み（setValues でまとめて書き込み） ======
+
+  // 4-1. task_logs に一括追記
+  if (newTaskLogRows.length > 0) {
+    const startRow = taskLogSheet.getLastRow() + 1;
+    taskLogSheet
+      .getRange(startRow, 1, newTaskLogRows.length, newTaskLogRows[0].length)
+      .setValues(newTaskLogRows);
+  }
+
+  // 4-2. user_status を更新（既存行はsetValues、新規行はappend）
+  // 既存行を rowIndex ごとに setValue（バッチ処理だが、行が散らばっているので個別更新）
+  userStatusUpdates.forEach(upd => {
+    if (upd.needNewRow) {
+      // 新規ユーザー：行を追加
+      userStatusSheet.appendRow([
+        upd.studentId,
+        upd.newTotalXp,
+        upd.newLevel,
+        upd.prevDate,
+        upd.prevDecay,
+        upd.prevFavTech,
+        upd.prevCatch,
+      ]);
+    } else {
+      // 既存ユーザー：XPとレベルだけ更新
+      userStatusSheet.getRange(upd.rowIndex, 2).setValue(upd.newTotalXp);
+      userStatusSheet.getRange(upd.rowIndex, 3).setValue(upd.newLevel);
+    }
+  });
+
+  // 4-3. xp_history に一括追記
+  if (newXpHistoryRows.length > 0) {
+    const xpHistorySheet = _sheet_('xp_history');
+    const startRow = xpHistorySheet.getLastRow() + 1;
+    xpHistorySheet
+      .getRange(startRow, 1, newXpHistoryRows.length, newXpHistoryRows[0].length)
+      .setValues(newXpHistoryRows);
+  }
+
+  // ====== 5. レスポンス組み立て ======
+  const xpPerStudent = processedCount > 0
+    ? Math.floor(totalXpGrantedAll / processedCount)
+    : 0;
+
+  return {
+    processed_count:  processedCount,
+    failed_count:     failures.length,
+    failures:         failures,
+    total_xp_granted: totalXpGrantedAll,
+    xp_per_student:   xpPerStudent,
+    multiplier:       BULK_EVAL_MULTIPLIER,
+    evaluated_count:  payload.evaluations.length,
+    results:          results,
   };
 }
 

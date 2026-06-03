@@ -1,6 +1,6 @@
 // src/app/teacher/page.tsx
 // =====================================================================
-// 燃えよ剣士 - 先生ダッシュボード（熱血ダークテーマ版）
+// 燃えよ剣士 - 先生ダッシュボード（熱血ダークテーマ版・全体評価入口追加）
 // 先生がスマホで担当生徒を一覧→タップして個別評価へ
 // =====================================================================
 
@@ -175,6 +175,26 @@ export default function TeacherHomePage() {
             </div>
           </div>
         </section>
+
+        {/* ★ Step 1: 全体評価への入り口（一括評価ページへの遷移ボタン） */}
+        <button
+          type="button"
+          onClick={() => router.push('/teacher/bulk')}
+          style={styles.bulkActionBtn}
+          aria-label="全体評価ページへ移動"
+          onTouchStart={(e) => { e.currentTarget.style.transform = 'scale(0.97)'; }}
+          onTouchEnd={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+          onMouseDown={(e) => { e.currentTarget.style.transform = 'scale(0.97)'; }}
+          onMouseUp={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+        >
+          <span style={styles.bulkIcon}>👥</span>
+          <div style={styles.bulkInfo}>
+            <div style={styles.bulkTitle}>全体評価をする（一括評価）</div>
+            <div style={styles.bulkSub}>稽古に来た生徒を一括で評価！ XP 5倍ボーナス！</div>
+          </div>
+          <span style={styles.bulkArrow}>▶</span>
+        </button>
 
         {/* ピンチアラート */}
         {pinchCount > 0 && (
@@ -434,6 +454,53 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: '2px',
   },
 
+  // === ★ Step 1 追加：全体評価ボタン ===
+  bulkActionBtn: {
+    width:           '100%',
+    display:         'flex',
+    alignItems:      'center',
+    gap:             '14px',
+    padding:         '16px 18px',
+    background:      `linear-gradient(135deg, #FFD700 0%, #FFA500 50%, #FFD700 100%)`,
+    border:          '2px solid #FFFFFF',
+    borderRadius:    '14px',
+    cursor:          'pointer',
+    boxShadow:       '0 6px 24px rgba(255,215,0,0.50), 0 0 32px rgba(255,165,0,0.30), inset 0 0 16px rgba(255,255,255,0.15)',
+    fontFamily:      'inherit',
+    textAlign:       'left',
+    transition:      'transform 0.08s ease',
+    WebkitTapHighlightColor: 'transparent',
+  },
+  bulkIcon: {
+    fontSize:   '36px',
+    flexShrink: 0,
+    filter:     'drop-shadow(0 2px 4px rgba(0,0,0,0.3))',
+  },
+  bulkInfo: {
+    flex:     1,
+    minWidth: 0,
+  },
+  bulkTitle: {
+    fontSize:      '16px',
+    fontWeight:    900,
+    color:         '#2D0B0B',
+    letterSpacing: '0.05em',
+    textShadow:    '0 1px 1px rgba(255,255,255,0.5)',
+  },
+  bulkSub: {
+    fontSize:      '11px',
+    fontWeight:    800,
+    color:         'rgba(45,11,11,0.85)',
+    marginTop:     '2px',
+    letterSpacing: '0.03em',
+  },
+  bulkArrow: {
+    fontSize:    '18px',
+    fontWeight:  900,
+    color:       '#2D0B0B',
+    flexShrink:  0,
+  },
+
   // === アラート ===
   alertBox: {
     display:    'flex',
@@ -515,8 +582,8 @@ const styles: Record<string, React.CSSProperties> = {
     WebkitTapHighlightColor: 'transparent',
   },
   sortBtnActive: {
-    color:           '#2D0B0B', // ★ 黒文字（金背景に対する高コントラスト）
-    backgroundColor: '#FFD700', // ★ 金背景（暗闇で映える）
+    color:           '#2D0B0B',
+    backgroundColor: '#FFD700',
     borderColor:     '#FFD700',
     fontWeight:      900,
     boxShadow:       '0 0 12px rgba(255,215,0,0.7), 0 0 20px rgba(255,215,0,0.30)',
