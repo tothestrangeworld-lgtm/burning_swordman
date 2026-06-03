@@ -775,6 +775,9 @@ function getTeacherDashboard(teacherId) {
   // 称号マスタ（フロント側でフォールバック可能だが、ペイロードに含めて整合性確保）
   const titleMaster = _getTitleMaster_();
 
+  // 課題マスタ
+  const taskMaster = _getTaskMaster_();  // ★追加：課題一覧を取得
+
   const today = new Date(_todayStr_());
 
   const summaries = students.map(s => {
@@ -815,6 +818,7 @@ function getTeacherDashboard(teacherId) {
     teacher:     teacher,
     students:    summaries,
     titleMaster: titleMaster,
+    taskMaster:  taskMaster,  // ★追加：フロントエンドに渡す
   };
 }
 
