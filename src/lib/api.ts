@@ -86,6 +86,27 @@ export async function loginUser(
 }
 
 // =====================================================================
+// 公開API: ユーザー一覧取得（ログイン画面のドロップダウン用）
+// =====================================================================
+import type { UserListResponse } from '@/types';
+
+export async function fetchUserList(): Promise<UserListResponse> {
+  return gasGet<UserListResponse>('getUserList');
+}
+
+// SWRフック版（5分キャッシュ・複数ログイン試行に有効）
+export function useUserListSWR() {
+  return useSWR<UserListResponse, Error>(
+    'gas:getUserList',
+    fetchUserList,
+    {
+      ...SWR_BASE_CONFIG,
+      dedupingInterval: SWR_DEDUP.MASTER,
+    },
+  );
+}
+
+// =====================================================================
 // 更新系API（Mutation）
 // =====================================================================
 export async function saveLogApi(
@@ -97,12 +118,44 @@ export async function saveLogApi(
   });
 }
 
+// ★ 追加：record/page.tsx から呼びやすい便利ラッパー
+//    ログインユーザーを内部で取得してuser_idを自動付与する
+export async function saveLog(
+  payload: SaveLogPayload,
+): Promise<SaveLogResponse> {
+  const me = getAuthUser();
+  if (!me || me.role !== 'student') {
+    throw new Error('ログインしていません');
+  }
+  // payload から action を取り除いて saveLogApi に渡す
+  const { action: _action, ...rest } = payload;
+  return saveLogApi({
+    ...rest,
+    user_id: me.id,
+  });
+}
+
 export async function evaluateStudentApi(
   payload: Omit<TeacherEvalPayload, 'action'> & { teacher_id: string },
 ): Promise<TeacherEvalResponse> {
   return gasPost<TeacherEvalResponse>({
     action: 'evaluateStudent',
     ...payload,
+  });
+}
+
+// ★ 追加：先生画面から呼びやすい便利ラッパー
+export async function evaluateStudent(
+  payload: TeacherEvalPayload,
+): Promise<TeacherEvalResponse> {
+  const me = getAuthUser();
+  if (!me || me.role !== 'teacher') {
+    throw new Error('先生としてログインしていません');
+  }
+  const { action: _action, ...rest } = payload;
+  return evaluateStudentApi({
+    ...rest,
+    teacher_id: me.id,
   });
 }
 

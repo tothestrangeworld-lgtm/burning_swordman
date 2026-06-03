@@ -1,6 +1,6 @@
 // src/app/record/page.tsx
 // =====================================================================
-// 燃えよ剣士 - 修行記録画面
+// 燃えよ剣士 - 修行記録画面（熱血ダークテーマ版）
 // 小学生剣士が「ポチポチ→記録！」で修行を可視化する核心画面
 // =====================================================================
 
@@ -58,7 +58,7 @@ export default function RecordPage() {
   }, [router]);
 
   // -----------------------------------------------------------------
-  // ダッシュボードデータ取得（マスター情報を再利用）
+  // ダッシュボードデータ取得
   // -----------------------------------------------------------------
   const { data, isLoading, error, mutate } = useMyDashboardSWR();
 
@@ -163,8 +163,6 @@ export default function RecordPage() {
 
       const res = await saveLog(payload);
       setResult(res);
-
-      // ダッシュボードキャッシュ更新
       mutate();
     } catch (err) {
       const msg = err instanceof Error ? err.message : '記録に失敗しました';
@@ -396,19 +394,21 @@ export default function RecordPage() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
+  // === 土台 ===
   outer: {
     position:        'relative',
     minHeight:       '100vh',
     width:           '100%',
-    backgroundColor: THEME.bgSoft,
+    backgroundColor: THEME.bg,
   },
   bgPattern: {
     position: 'fixed',
     inset:    0,
     background: `
-      radial-gradient(circle at 10% 5%, rgba(178,34,34,0.04) 0%, transparent 30%),
-      radial-gradient(circle at 90% 95%, rgba(255,215,0,0.04) 0%, transparent 30%),
-      linear-gradient(180deg, ${THEME.bg} 0%, ${THEME.bgSoft} 100%)
+      radial-gradient(circle at 15% 8%, rgba(255,68,68,0.22) 0%, transparent 38%),
+      radial-gradient(circle at 85% 92%, rgba(255,215,0,0.10) 0%, transparent 35%),
+      radial-gradient(circle at 50% 50%, rgba(0,0,0,0.18) 0%, transparent 70%),
+      linear-gradient(180deg, ${THEME.bgSoft} 0%, ${THEME.bg} 55%, ${THEME.primaryDark} 100%)
     `,
     zIndex:        0,
     pointerEvents: 'none',
@@ -424,27 +424,28 @@ const styles: Record<string, React.CSSProperties> = {
     gap:           '14px',
   },
 
-  // ヘッダーバー
+  // === ヘッダーバー ===
   headerBar: {
     display:        'flex',
     justifyContent: 'space-between',
     alignItems:     'center',
     padding:        '10px 12px',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: THEME.bgCard,
     borderRadius:   '12px',
     border:         `2px solid ${THEME.primary}`,
-    boxShadow:      '0 2px 8px rgba(178,34,34,0.10)',
+    boxShadow:      '0 4px 16px rgba(178,34,34,0.30), inset 0 0 30px rgba(178,34,34,0.10)',
   },
   backBtn: {
     padding:         '6px 12px',
     fontSize:        '13px',
-    fontWeight:      700,
-    color:           THEME.primaryDark,
-    backgroundColor: '#FFFFFF',
+    fontWeight:      900,
+    color:           '#FFFFFF',
+    backgroundColor: 'rgba(255,255,255,0.05)',
     border:          `1.5px solid ${THEME.primary}`,
     borderRadius:    '999px',
     cursor:          'pointer',
     minWidth:        '60px',
+    letterSpacing:   '0.05em',
   },
   headerTitleBox: {
     display:    'flex',
@@ -457,42 +458,47 @@ const styles: Record<string, React.CSSProperties> = {
   headerTitle: {
     fontSize:   '16px',
     fontWeight: 900,
-    color:      THEME.primary,
+    color:      '#FFD700', // 金で映える
     letterSpacing: '0.05em',
+    textShadow: '0 0 8px rgba(255,215,0,0.4)',
   },
 
-  // イントロ
+  // === イントロ ===
   introCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: THEME.bgCard,
     borderRadius:    '14px',
     padding:         '16px',
     border:          `2px dashed ${THEME.primary}`,
     textAlign:       'center',
+    boxShadow:       '0 4px 16px rgba(0,0,0,0.45), inset 0 0 24px rgba(178,34,34,0.10)',
   },
   introIcon: {
     fontSize: '40px',
     marginBottom: '4px',
+    filter:    'drop-shadow(0 0 6px rgba(255,215,0,0.5))',
   },
   introTitle: {
     margin:     '4px 0 6px',
     fontSize:   '18px',
     fontWeight: 900,
-    color:      THEME.primaryDark,
+    color:      '#FFFFFF',
+    textShadow: '0 0 8px rgba(178,34,34,0.6)',
+    letterSpacing: '0.05em',
   },
   introSub: {
     margin:    0,
     fontSize:  '13px',
-    color:     THEME.textMuted,
+    color:     'rgba(255,255,255,0.7)',
     lineHeight: 1.5,
   },
 
-  // セクション共通
+  // === セクション ===
   section: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: THEME.bgCard,
     borderRadius:    '16px',
     padding:         '16px 14px',
     border:          `2px solid ${THEME.primary}`,
-    boxShadow:       `0 4px 16px rgba(178, 34, 34, 0.08)`,
+    boxShadow:       '0 6px 24px rgba(0,0,0,0.55), inset 0 0 30px rgba(178,34,34,0.10)',
   },
   sectionHeader: {
     display:    'flex',
@@ -509,17 +515,20 @@ const styles: Record<string, React.CSSProperties> = {
     margin:     0,
     fontSize:   '17px',
     fontWeight: 900,
-    color:      THEME.primaryDark,
+    color:      '#FFD700', // 金
     flex:       1,
+    letterSpacing: '0.05em',
+    textShadow: '0 0 6px rgba(255,215,0,0.4)',
   },
   sectionCount: {
     fontSize:        '11px',
-    fontWeight:      700,
-    color:           THEME.textMuted,
-    backgroundColor: '#FFF8F8',
+    fontWeight:      900,
+    color:           '#FFFFFF',
+    backgroundColor: 'rgba(255,255,255,0.08)',
     padding:         '3px 10px',
     borderRadius:    '999px',
-    border:          `1px solid ${THEME.border}`,
+    border:          '1px solid rgba(255,255,255,0.2)',
+    letterSpacing:   '0.05em',
   },
   cardList: {
     display:       'flex',
@@ -527,15 +536,15 @@ const styles: Record<string, React.CSSProperties> = {
     gap:           '12px',
   },
 
-  // 固定フッター
+  // === 固定フッター ===
   fixedFooter: {
     position:        'fixed',
     bottom:          0,
     left:            0,
     right:           0,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: THEME.bgCard,
     borderTop:       `3px solid ${THEME.primary}`,
-    boxShadow:       '0 -4px 16px rgba(178,34,34,0.15)',
+    boxShadow:       '0 -4px 24px rgba(178,34,34,0.40)',
     zIndex:          10,
   },
   footerInner: {
@@ -551,9 +560,10 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'space-between',
     alignItems:     'center',
     padding:        '8px 14px',
-    backgroundColor: '#FFF8F8',
+    backgroundColor: 'rgba(255,255,255,0.04)',
     borderRadius:   '8px',
     border:         `1px solid ${THEME.primary}`,
+    boxShadow:      'inset 0 0 12px rgba(178,34,34,0.20)',
   },
   previewLeft: {
     display:    'flex',
@@ -566,7 +576,7 @@ const styles: Record<string, React.CSSProperties> = {
   previewLabel: {
     fontSize:   '13px',
     fontWeight: 700,
-    color:      THEME.textMuted,
+    color:      'rgba(255,255,255,0.8)',
   },
   previewRight: {
     display:    'flex',
@@ -576,20 +586,21 @@ const styles: Record<string, React.CSSProperties> = {
   previewXp: {
     fontSize:   '24px',
     fontWeight: 900,
-    color:      THEME.primary,
+    color:      '#FFD700',
     lineHeight: 1,
+    textShadow: '0 0 8px rgba(255,215,0,0.6)',
   },
   previewUnit: {
     fontSize:   '13px',
     fontWeight: 900,
-    color:      THEME.primaryDark,
+    color:      '#FFFFFF',
   },
   errorBox: {
     padding:         '8px 12px',
-    backgroundColor: '#FDECEA',
-    border:          `1px solid #C0392B`,
+    backgroundColor: 'rgba(220,20,60,0.18)',
+    border:          '1px solid #FF5555',
     borderRadius:    '6px',
-    color:           '#C0392B',
+    color:           '#FFCCCC',
     fontSize:        '12px',
     fontWeight:      700,
   },
@@ -601,10 +612,10 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight:      900,
     color:           '#FFFFFF',
     background:      `linear-gradient(180deg, #D94545 0%, ${THEME.primary} 50%, ${THEME.primaryDark} 100%)`,
-    border:          `2px solid ${THEME.primaryDark}`,
+    border:          `2px solid #FFD700`,
     borderRadius:    '12px',
     cursor:          'pointer',
-    boxShadow:       `0 4px 0 ${THEME.primaryDark}, 0 6px 12px rgba(178,34,34,0.3)`,
+    boxShadow:       `0 4px 0 ${THEME.primaryDark}, 0 6px 16px rgba(255,215,0,0.3)`,
     letterSpacing:   '0.1em',
     transition:      'transform 0.08s ease',
     display:         'flex',
@@ -612,12 +623,15 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent:  'center',
     gap:             '10px',
     WebkitTapHighlightColor: 'transparent',
+    textShadow:      '0 1px 2px rgba(0,0,0,0.6)',
   },
   submitBtnDisabled: {
-    opacity:    0.5,
+    opacity:    0.65,
     cursor:     'not-allowed',
-    background: `linear-gradient(180deg, #C99 0%, #A77 100%)`,
-    boxShadow:  '0 4px 0 #855',
+    background: `linear-gradient(180deg, #5A2C2C 0%, #3A1818 100%)`,
+    boxShadow:  '0 4px 0 #1A0505',
+    color:      'rgba(255,255,255,0.85)',
+    border:     '2px solid rgba(255,255,255,0.25)',
   },
   submitIcon: {
     fontSize: '22px',
@@ -635,7 +649,7 @@ const styles: Record<string, React.CSSProperties> = {
     animation:      'burning_record_spin 0.8s linear infinite',
   },
 
-  // ローディング
+  // === ローディング ===
   loadingBox: {
     minHeight:      '100vh',
     display:        'flex',
@@ -643,18 +657,25 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems:     'center',
     justifyContent: 'center',
     padding:        '32px',
-    backgroundColor: THEME.bgSoft,
+    backgroundColor: THEME.bg,
+    background: `
+      radial-gradient(circle at 50% 30%, rgba(178,34,34,0.20) 0%, transparent 50%),
+      linear-gradient(180deg, ${THEME.bgSoft} 0%, ${THEME.bg} 100%)
+    `,
   },
   loadingFlame: {
     fontSize:  '64px',
     animation: 'burning_load_flame 1.4s ease-in-out infinite',
     marginBottom: '16px',
+    filter:    'drop-shadow(0 0 12px rgba(255,68,68,0.6))',
   },
   loadingText: {
     fontSize:   '15px',
-    fontWeight: 700,
-    color:      THEME.primaryDark,
+    fontWeight: 900,
+    color:      '#FFD700',
     margin:     0,
+    textShadow: '0 0 6px rgba(255,215,0,0.5)',
+    letterSpacing: '0.1em',
   },
   errorRetry: {
     marginTop:       '20px',
@@ -663,8 +684,9 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight:      900,
     color:           '#FFFFFF',
     background:      `linear-gradient(180deg, ${THEME.primary} 0%, ${THEME.primaryDark} 100%)`,
-    border:          'none',
+    border:          '2px solid #FFD700',
     borderRadius:    '8px',
     cursor:          'pointer',
+    letterSpacing:   '0.05em',
   },
 };

@@ -80,7 +80,9 @@ export interface TaskLogEntry {
   score:        number; // 1〜5
   xp_earned:    number;
   /** 'self' または 先生ID */
-  evaluator_id: string;
+  evaluator_id:   string;
+  evaluator_name?: string;
+  comment?:         string;
 }
 
 export interface TechniqueLogEntry {
@@ -112,16 +114,16 @@ export interface XpHistoryEntry {
 // 先生評価
 // =====================================================================
 
+/** task_logs の先生評価行（GAS: _getTaskLogs_ と同型） */
 export interface TeacherEvaluationEntry {
-  teacher_id:  string;
-  teacher_name: string;
-  student_id:  string;
-  task_id:     string;
-  task_text:   string;
-  date:        string;
-  score:       number;       // 1〜5
-  xp_granted:  number;       // ×10適用済み
-  comment?:    string;
+  date:           string;
+  task_id:        string;
+  task_text:      string;
+  score:          number;
+  xp_earned:      number;
+  evaluator_id:   string;
+  evaluator_name?: string;
+  comment?:       string;
 }
 
 /** 先生が評価UIで送信するペイロード */
@@ -258,6 +260,7 @@ export interface StudentSummary {
 export interface TeacherDashboardData {
   teacher:  User;
   students: StudentSummary[];
+  titleMaster: TitleMasterEntry[]; // ★追加
 }
 
 /** 先生が個別生徒画面に入った際のデータ */
@@ -265,6 +268,7 @@ export interface StudentDetailData {
   student:       User;
   status:        UserStatus;
   taskMaster:    TaskMasterEntry[];
+  titleMaster:           TitleMasterEntry[];   // ★追加
   recentLogs:    TaskLogEntry[];      // 直近30日
   techniques:    Technique[];
   /** 先生が今日すでに評価した課題ID（連打防止） */
@@ -430,19 +434,25 @@ export function calcMinigameRank(
 }
 
 // =====================================================================
-// テーマカラー（白×臙脂）
+// テーマカラー（臙脂ベース×白差し・熱血ダーク）
 // =====================================================================
 
 export const THEME = {
-  primary:    '#B22222', // 臙脂色（ファイアブリック）
-  primaryDark:'#8B1A1A',
-  bg:         '#FFFFFF',
-  bgSoft:     '#FFF8F8',
-  bgPattern:  '#FBEFEF', // ★追加：和紙風背景パターン色
-  text:       '#2B2B2B',
-  textMuted:  '#777777',
-  accent:     '#FFD700', // 金色（先生評価のキラキラ演出用）
-  border:     '#E5D8D8',
+  primary:     '#FF4444', // 炎のハイライト
+  primaryDark: '#8B0000', // 深い熱血色
+  bg:          '#8B0000', // 画面背景（ベース）
+  bgSoft:      '#9B1C1C', // 画面背景（グラデーション先）
+  bgCard:      '#5A0B0B', // カード背景
+  bgCardDeep:  '#4A0505', // より深いカード
+  bgInk:       '#0A0202', // 漆黒（技の修得チャート内）
+  bgBubble:    '#3D1010', // コメント吹き出し
+  text:        '#FFFFFF',
+  textMuted:   '#FFEAE2', // 淡い炎色・クリーム
+  textSubtle:  'rgba(255,234,226,0.6)',
+  accent:      '#FFD700',
+  border:      'rgba(255,255,255,0.35)',
+  borderSolid: '#FFFFFF',
+  bgPattern:   '#7A1515',
 } as const;
 
 // =====================================================================
@@ -457,4 +467,19 @@ export function levelColor(level: number): string {
   if (level >= 10) return '#FF6347'; // 炎：トマト
   if (level >= 5)  return '#FFA07A'; // 元気：薄橙
   return '#A0A0A0';                  // 見習い：灰
+}
+
+// =====================================================================
+// ログイン用ユーザー一覧（公開エンドポイント用）
+// 個人情報を最小限に絞った軽量版
+// =====================================================================
+export interface UserListEntry {
+  id:    string;
+  name:  string;
+  role:  UserRole;
+  grade: number; // 0=teacher, 1〜6=student
+}
+
+export interface UserListResponse {
+  users: UserListEntry[];
 }

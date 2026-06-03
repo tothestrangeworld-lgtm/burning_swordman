@@ -17,6 +17,10 @@ import { THEME } from '@/types';
 interface Props {
   xpHistory?: XpHistoryEntry[];
   compact?:   boolean;
+  /** StatusCard 内蔵用：外枠を透過 */
+  embedded?:  boolean;
+  /** 暗色カード上で白軸表示 */
+  dark?:      boolean;
 }
 
 function toDisplayDate(dateStr: string): string {
@@ -119,8 +123,9 @@ interface DotProps {
   cx?: number;
   cy?: number;
   payload?: { type?: string };
+  dark?: boolean;
 }
-function CustomDot({ cx, cy, payload }: DotProps) {
+function CustomDot({ cx, cy, payload, dark = false }: DotProps) {
   if (cx === undefined || cy === undefined) return null;
   const type = payload?.type ?? '';
 
@@ -150,21 +155,32 @@ function CustomDot({ cx, cy, payload }: DotProps) {
   // gain（通常）
   return (
     <circle cx={cx} cy={cy} r={2.5}
-      fill={THEME.primary} stroke="transparent" strokeWidth={0} />
+      fill={dark ? '#FF6666' : THEME.primary} stroke="transparent" strokeWidth={0} />
   );
 }
 
-export default function XpTimelineChart({ xpHistory = [], compact = false }: Props) {
+export default function XpTimelineChart({
+  xpHistory = [], compact = false, embedded = false, dark = false,
+}: Props) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
+
+  const isDarkChart = dark || embedded;
+  const tickFill    = isDarkChart ? 'rgba(255,255,255,0.6)' : THEME.textMuted;
+  const gridStroke  = isDarkChart ? 'rgba(255,255,255,0.12)' : 'rgba(178,34,34,0.08)';
+  const axisStroke  = isDarkChart ? 'rgba(255,255,255,0.25)' : THEME.border;
+  const areaStroke  = isDarkChart ? THEME.accent : THEME.primary;
 
   if (!mounted) return null;
 
   if (!xpHistory.length) {
     return (
       <div style={{
-        textAlign: 'center', padding: '2rem 1rem',
-        color: THEME.textMuted, fontSize: '13px',
+        textAlign: 'center',
+        padding: embedded ? '1rem 0.5rem' : '2rem 1rem',
+        color: THEME.textMuted,
+        fontSize: '12px',
+        background: embedded ? 'transparent' : undefined,
       }}>
         ⚔️ 稽古を記録すると、修行値の推移がここに表示されるぞ！
       </div>
@@ -172,7 +188,7 @@ export default function XpTimelineChart({ xpHistory = [], compact = false }: Pro
   }
 
   const maxXP  = Math.max(...xpHistory.map(e => e.total_xp_after));
-  const height = compact ? 180 : 240;
+  const height = embedded ? 170 : (compact ? 180 : 240);
   const xTicks = buildXTicks(xpHistory);
 
   const chartData = xpHistory.map(e => ({
@@ -184,37 +200,56 @@ export default function XpTimelineChart({ xpHistory = [], compact = false }: Pro
     level:          e.level,
   }));
 
-  const gradId = compact ? 'burningXpGradC' : 'burningXpGradF';
+  const gradId = `${compact ? 'burningXpGradC' : 'burningXpGradF'}${isDarkChart ? 'D' : ''}`;
 
   return (
-    <div style={{ width: '100%', height }}>
+    <div style={{
+      width: '100%',
+      height,
+      marginLeft: embedded ? -4 : 0,
+      background: embedded ? 'transparent' : undefined,
+    }}>
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={chartData} margin={{ top: 14, right: 12, left: -16, bottom: 36 }}>
+        <AreaChart data={chartData} margin={{
+          top: 10,
+          right: embedded ? 4 : 12,
+          left: embedded ? -20 : -16,
+          bottom: embedded ? 28 : 36,
+        }}>
           <defs>
-            {/* 臙脂→ゴールドの和風グラデーション */}
             <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%"   stopColor={THEME.primary}   stopOpacity={0.55} />
-              <stop offset="50%"  stopColor={THEME.primary}   stopOpacity={0.25} />
-              <stop offset="100%" stopColor="#FFFFFF"         stopOpacity={0.05} />
+              {isDarkChart ? (
+                <>
+                  <stop offset="0%"   stopColor={THEME.accent} stopOpacity={0.45} />
+                  <stop offset="50%"  stopColor={THEME.primary} stopOpacity={0.2} />
+                  <stop offset="100%" stopColor="#FFFFFF" stopOpacity={0.02} />
+                </>
+              ) : (
+                <>
+                  <stop offset="0%"   stopColor={THEME.primary}   stopOpacity={0.55} />
+                  <stop offset="50%"  stopColor={THEME.primary}   stopOpacity={0.25} />
+                  <stop offset="100%" stopColor="#FFFFFF"         stopOpacity={0.05} />
+                </>
+              )}
             </linearGradient>
           </defs>
 
           <CartesianGrid
             strokeDasharray="3 3"
-            stroke="rgba(178,34,34,0.08)"
+            stroke={gridStroke}
             vertical={false}
           />
 
           <XAxis
             dataKey="label"
             ticks={xTicks}
-            tick={{ fontSize: 10, fill: THEME.textMuted, fontWeight: 700 }}
+            tick={{ fontSize: 10, fill: tickFill, fontWeight: 700 }}
             tickLine={false}
-            axisLine={{ stroke: THEME.border }}
+            axisLine={{ stroke: axisStroke }}
             dy={6}
           />
           <YAxis
-            tick={{ fontSize: 10, fill: THEME.textMuted, fontWeight: 700 }}
+            tick={{ fontSize: 10, fill: tickFill, fontWeight: 700 }}
             tickLine={false}
             axisLine={false}
             tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v)}
@@ -222,36 +257,38 @@ export default function XpTimelineChart({ xpHistory = [], compact = false }: Pro
 
           <Tooltip content={<CustomTooltip />} />
 
-          {/* 最高XPの基準線 */}
-          <ReferenceLine
-            y={maxXP}
-            stroke={THEME.accent}
-            strokeDasharray="4 4"
-            strokeWidth={1.5}
-            label={{
-              value: `🏆 最高 ${maxXP.toLocaleString()}`,
-              position: 'insideTopRight',
-              fontSize: 10,
-              fill: '#B8860B',
-              fontWeight: 700,
-            }}
-          />
+          {!embedded && (
+            <ReferenceLine
+              y={maxXP}
+              stroke={THEME.accent}
+              strokeDasharray="4 4"
+              strokeWidth={1.5}
+              label={{
+                value: `🏆 最高 ${maxXP.toLocaleString()}`,
+                position: 'insideTopRight',
+                fontSize: 10,
+                fill: '#B8860B',
+                fontWeight: 700,
+              }}
+            />
+          )}
 
-          {/* 階段状エリア（修行が積み上がる感） */}
           <Area
             type="stepAfter"
             dataKey="total_xp_after"
-            stroke={THEME.primary}
+            stroke={areaStroke}
             strokeWidth={compact ? 2 : 2.5}
             fill={`url(#${gradId})`}
-            dot={<CustomDot />}
+            dot={<CustomDot dark={isDarkChart} />}
             activeDot={{
               r: 6,
-              fill: THEME.primary,
+              fill: isDarkChart ? THEME.accent : THEME.primary,
               stroke: '#FFFFFF',
               strokeWidth: 2,
             }}
-            style={{ filter: `drop-shadow(0 2px 4px rgba(178,34,34,0.25))` }}
+            style={{ filter: isDarkChart
+              ? 'drop-shadow(0 0 8px rgba(255,215,0,0.35))'
+              : 'drop-shadow(0 2px 4px rgba(178,34,34,0.25))' }}
           />
         </AreaChart>
       </ResponsiveContainer>

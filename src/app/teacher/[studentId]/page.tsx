@@ -1,6 +1,6 @@
 // src/app/teacher/[studentId]/page.tsx
 // =====================================================================
-// 燃えよ剣士 - 個別生徒評価画面
+// 燃えよ剣士 - 個別生徒評価画面（熱血ダークテーマ版・日付表示修正）
 // 先生がスマホでサクサク評価→XP10倍ボーナス付与
 // =====================================================================
 
@@ -29,10 +29,40 @@ interface TaskScoreMap {
   [taskId: string]: number;
 }
 
+interface TaskCommentMap {
+  [taskId: string]: string;
+}
+
 // 学年表示
 function formatGrade(grade: number): string {
   if (!grade || grade < 1 || grade > 6) return '';
   return `${grade}年生`;
+}
+
+// =====================================================================
+// ★ 日付の短縮表示（MM/dd 形式に安全変換）
+// GASから返るフォーマットのバラつきに対応：
+//   - "2026-05-27"          → "05/27"
+//   - "Mon May 27 2026..."  → "05/27"
+//   - "2026-05-27T10:30Z"   → "05/27"
+// =====================================================================
+function formatShortDate(rawDate: string): string {
+  if (!rawDate) return '';
+
+  // 1. "YYYY-MM-DD" 形式が含まれているかチェック（最優先・最高速）
+  const ymdMatch = rawDate.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (ymdMatch) return `${ymdMatch[2]}/${ymdMatch[3]}`;
+
+  // 2. JS標準のDateとしてパース（"Mon May 27 2026..." 等のGAS形式に対応）
+  const d = new Date(rawDate);
+  if (!isNaN(d.getTime())) {
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${mm}/${dd}`;
+  }
+
+  // 3. どちらもダメならフォールバック
+  return rawDate.slice(0, 5);
 }
 
 export default function TeacherEvalPage() {
@@ -68,11 +98,12 @@ export default function TeacherEvalPage() {
   // 入力ステート
   // -----------------------------------------------------------------
   const [taskScores, setTaskScores]     = useState<TaskScoreMap>({});
-  const [comment,    setComment]        = useState('');
+  const [taskComments, setTaskComments] = useState<TaskCommentMap>({});
   const [submitting, setSubmitting]     = useState(false);
   const [submitError,setSubmitError]    = useState('');
   const [success,    setSuccess]        = useState<{ xp: number } | null>(null);
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
+  const [expandedCommentTaskId, setExpandedCommentTaskId] = useState<string | null>(null);
 
   // -----------------------------------------------------------------
   // XP合計プレビュー
@@ -98,6 +129,24 @@ export default function TeacherEvalPage() {
       }
       return { ...prev, [taskId]: score };
     });
+    if (score === 0) {
+      setTaskComments(prev => {
+        const { [taskId]: _, ...rest } = prev;
+        return rest;
+      });
+      setExpandedCommentTaskId(prev => (prev === taskId ? null : prev));
+    }
+  };
+
+  const handleCommentChange = (taskId: string, value: string) => {
+    setTaskComments(prev => {
+      const trimmed = value.slice(0, 200);
+      if (!trimmed.trim()) {
+        const { [taskId]: _, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [taskId]: trimmed };
+    });
   };
 
   const handleSubmit = async () => {
@@ -113,11 +162,14 @@ export default function TeacherEvalPage() {
     try {
       const evaluations = Object.entries(taskScores)
         .filter(([, s]) => s > 0)
-        .map(([task_id, score]) => ({
-          task_id,
-          score,
-          ...(comment.trim() ? { comment: comment.trim() } : {}),
-        }));
+        .map(([task_id, score]) => {
+          const taskComment = (taskComments[task_id] || '').trim();
+          return {
+            task_id,
+            score,
+            ...(taskComment ? { comment: taskComment } : {}),
+          };
+        });
 
       const payload: TeacherEvalPayload = {
         action:      'evaluateStudent',
@@ -127,16 +179,14 @@ export default function TeacherEvalPage() {
 
       const result = await evaluateStudent(payload);
 
-      // 入力リセット
       setTaskScores({});
-      setComment('');
+      setTaskComments({});
+      setExpandedCommentTaskId(null);
 
-      // 成功表示
       setSuccess({
         xp: result.xp_granted ?? xpPreview,
       });
 
-      // キャッシュ更新
       mutate();
       mutateTeacherList();
     } catch (err) {
@@ -233,13 +283,21 @@ export default function TeacherEvalPage() {
                   <span style={styles.studentGrade}>{gradeLabel}</span>
                 )}
               </div>
-              <div style={{ ...styles.studentTitle, color: lvColor }}>
+              <div style={{
+                ...styles.studentTitle,
+                color: lvColor,
+                textShadow: `0 0 6px ${lvColor}88`,
+              }}>
                 {title}
               </div>
             </div>
             <div style={styles.studentLevel}>
               <span style={styles.studentLvLabel}>修行度</span>
-              <span style={{ ...styles.studentLvNum, color: lvColor }}>
+              <span style={{
+                ...styles.studentLvNum,
+                color: lvColor,
+                textShadow: `0 0 8px ${lvColor}AA`,
+              }}>
                 Lv.{status.level}
               </span>
             </div>
@@ -271,7 +329,8 @@ export default function TeacherEvalPage() {
               {recentLogs.slice(0, 5).map((log, i) => (
                 <li key={i} style={styles.recentItem}>
                   <span style={styles.recentDate}>
-                    {log.date.slice(5).replace('-', '/')}
+                    {/* ★ 修正：安全な日付パース関数を使用 */}
+                    {formatShortDate(log.date)}
                   </span>
                   <span style={styles.recentText}>
                     {log.task_text}
@@ -324,30 +383,16 @@ export default function TeacherEvalPage() {
                 onToggleCriteria={() =>
                   setExpandedTaskId(prev => (prev === task.id ? null : task.id))
                 }
+                comment={taskComments[task.id] ?? ''}
+                onCommentChange={(value) => handleCommentChange(task.id, value)}
+                commentExpanded={expandedCommentTaskId === task.id}
+                onToggleComment={() =>
+                  setExpandedCommentTaskId(prev => (prev === task.id ? null : task.id))
+                }
               />
             ))}
           </div>
         </section>
-
-        {/* コメント */}
-        {!allTasksDone && (
-          <section style={styles.commentSection}>
-            <label style={styles.commentLabel}>
-              💬 コメント（任意・生徒には表示されません）
-            </label>
-            <textarea
-              value={comment}
-              onChange={(e) => setComment(e.target.value)}
-              placeholder="例：基本がよくできていた。次は応じ技を…"
-              style={styles.commentInput}
-              maxLength={200}
-              rows={2}
-            />
-            <div style={styles.commentLimit}>
-              {comment.length}/200
-            </div>
-          </section>
-        )}
 
         {/* フッター余白 */}
         <div style={{ height: 160 }} />
@@ -490,7 +535,7 @@ function SuccessModal({
         <div style={modalStyles.checkmark}>✅</div>
         <h2 style={modalStyles.title}>評価完了！</h2>
         <p style={modalStyles.subtitle}>
-          <strong>{studentName}</strong> に修行値を授けた
+          <strong style={{ color: '#FFD700' }}>{studentName}</strong> に修行値を授けた
         </p>
 
         <div style={modalStyles.xpBox}>
@@ -528,19 +573,21 @@ function SuccessModal({
 // スタイル
 // =====================================================================
 const styles: Record<string, React.CSSProperties> = {
+  // === 土台 ===
   outer: {
     position:        'relative',
     minHeight:       '100vh',
     width:           '100%',
-    backgroundColor: THEME.bgSoft,
+    backgroundColor: THEME.bg,
   },
   bgPattern: {
     position: 'fixed',
     inset:    0,
     background: `
-      radial-gradient(circle at 10% 5%, rgba(178,34,34,0.04) 0%, transparent 30%),
-      radial-gradient(circle at 90% 95%, rgba(255,215,0,0.04) 0%, transparent 30%),
-      linear-gradient(180deg, ${THEME.bg} 0%, ${THEME.bgSoft} 100%)
+      radial-gradient(circle at 15% 8%, rgba(255,68,68,0.22) 0%, transparent 38%),
+      radial-gradient(circle at 85% 92%, rgba(255,215,0,0.10) 0%, transparent 35%),
+      radial-gradient(circle at 50% 50%, rgba(0,0,0,0.18) 0%, transparent 70%),
+      linear-gradient(180deg, ${THEME.bgSoft} 0%, ${THEME.bg} 55%, ${THEME.primaryDark} 100%)
     `,
     zIndex:        0,
     pointerEvents: 'none',
@@ -555,26 +602,29 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     gap:           '12px',
   },
+
+  // === ヘッダーバー ===
   headerBar: {
     display:        'flex',
     justifyContent: 'space-between',
     alignItems:     'center',
     padding:        '10px 12px',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: THEME.bgCard,
     borderRadius:   '12px',
     border:         `2px solid ${THEME.primary}`,
-    boxShadow:      '0 2px 8px rgba(178,34,34,0.10)',
+    boxShadow:      '0 4px 16px rgba(178,34,34,0.30), inset 0 0 30px rgba(178,34,34,0.10)',
   },
   backBtn: {
     padding:         '6px 12px',
     fontSize:        '13px',
-    fontWeight:      700,
-    color:           THEME.primaryDark,
-    backgroundColor: '#FFFFFF',
+    fontWeight:      900,
+    color:           '#FFFFFF',
+    backgroundColor: 'rgba(255,255,255,0.05)',
     border:          `1.5px solid ${THEME.primary}`,
     borderRadius:    '999px',
     cursor:          'pointer',
     minWidth:        '60px',
+    letterSpacing:   '0.05em',
   },
   headerTitleBox: {
     display:    'flex',
@@ -587,15 +637,18 @@ const styles: Record<string, React.CSSProperties> = {
   headerTitle: {
     fontSize:   '16px',
     fontWeight: 900,
-    color:      THEME.primary,
+    color:      '#FFD700',
     letterSpacing: '0.05em',
+    textShadow: '0 0 8px rgba(255,215,0,0.4)',
   },
+
+  // === 生徒カード ===
   studentCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: THEME.bgCard,
     borderRadius:    '14px',
     padding:         '14px 16px',
     border:          `2px solid ${THEME.primary}`,
-    boxShadow:       '0 4px 12px rgba(178,34,34,0.10)',
+    boxShadow:       '0 4px 16px rgba(0,0,0,0.45), inset 0 0 24px rgba(178,34,34,0.10)',
   },
   studentTop: {
     display:    'flex',
@@ -603,11 +656,12 @@ const styles: Record<string, React.CSSProperties> = {
     gap:        '12px',
   },
   studentIcon: {
-    fontSize: '36px',
-    flexShrink: 0,
+    fontSize:    '36px',
+    flexShrink:  0,
+    filter:      'drop-shadow(0 0 8px rgba(255,215,0,0.4))',
   },
   studentInfo: {
-    flex: 1,
+    flex:     1,
     minWidth: 0,
   },
   studentNameRow: {
@@ -617,23 +671,24 @@ const styles: Record<string, React.CSSProperties> = {
     flexWrap:   'wrap',
   },
   studentName: {
-    fontSize:   '20px',
-    fontWeight: 900,
-    color:      THEME.text,
+    fontSize:      '20px',
+    fontWeight:    900,
+    color:         '#FFFFFF',
     letterSpacing: '0.02em',
+    textShadow:    '0 1px 2px rgba(0,0,0,0.5)',
   },
   studentGrade: {
     fontSize:        '11px',
     fontWeight:      700,
-    color:           THEME.textMuted,
-    backgroundColor: '#FFF8F8',
+    color:           'rgba(255,255,255,0.7)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
     padding:         '2px 8px',
     borderRadius:    '999px',
-    border:          `1px solid ${THEME.border}`,
+    border:          '1px solid rgba(255,255,255,0.2)',
   },
   studentTitle: {
     fontSize:   '13px',
-    fontWeight: 800,
+    fontWeight: 900,
     marginTop:  '3px',
   },
   studentLevel: {
@@ -645,7 +700,7 @@ const styles: Record<string, React.CSSProperties> = {
   studentLvLabel: {
     fontSize:      '9px',
     fontWeight:    700,
-    color:         THEME.textMuted,
+    color:         'rgba(255,255,255,0.6)',
     letterSpacing: '0.15em',
   },
   studentLvNum: {
@@ -654,220 +709,211 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1.1,
   },
   studentBottom: {
-    marginTop:  '12px',
-    paddingTop: '10px',
-    borderTop:  `1px dashed ${THEME.border}`,
-    display:    'flex',
+    marginTop:     '12px',
+    paddingTop:    '10px',
+    borderTop:     '1px dashed rgba(255,255,255,0.18)',
+    display:       'flex',
     flexDirection: 'column',
-    gap:        '6px',
+    gap:           '6px',
   },
   studentXpBox: {
-    display:    'flex',
+    display:        'flex',
     justifyContent: 'space-between',
-    alignItems: 'baseline',
+    alignItems:     'baseline',
   },
   studentXpLabel: {
-    fontSize:   '11px',
-    fontWeight: 700,
-    color:      THEME.textMuted,
+    fontSize:      '11px',
+    fontWeight:    700,
+    color:         'rgba(255,255,255,0.65)',
     letterSpacing: '0.1em',
   },
   studentXpNum: {
     fontSize:   '15px',
     fontWeight: 900,
-    color:      THEME.primaryDark,
+    color:      '#FFD700',
+    textShadow: '0 0 6px rgba(255,215,0,0.5)',
   },
   studentCatchphrase: {
     fontSize:        '12px',
-    color:           THEME.primaryDark,
+    color:           '#FFD700',
     fontStyle:       'italic',
-    backgroundColor: '#FFFEF0',
+    backgroundColor: 'rgba(255,215,0,0.10)',
     padding:         '6px 10px',
     borderRadius:    '6px',
     border:          `1px dashed ${THEME.accent}`,
+    textShadow:      '0 0 4px rgba(255,215,0,0.4)',
   },
+
+  // === 最近の稽古 ===
   recentSection: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: THEME.bgCard,
     borderRadius:    '12px',
     padding:         '12px 14px',
-    border:          `1px solid ${THEME.border}`,
+    border:          '1px solid rgba(255,255,255,0.15)',
+    boxShadow:       '0 2px 12px rgba(0,0,0,0.40)',
   },
   recentHeader: {
-    display:    'flex',
-    alignItems: 'center',
-    gap:        '6px',
+    display:      'flex',
+    alignItems:   'center',
+    gap:          '6px',
     marginBottom: '8px',
   },
   recentIcon: {
     fontSize: '16px',
   },
   recentTitle: {
-    margin:     0,
-    fontSize:   '13px',
-    fontWeight: 900,
-    color:      THEME.primaryDark,
+    margin:        0,
+    fontSize:      '13px',
+    fontWeight:    900,
+    color:         '#FFD700',
+    textShadow:    '0 0 4px rgba(255,215,0,0.4)',
+    letterSpacing: '0.05em',
   },
   recentList: {
-    listStyle: 'none',
-    margin:    0,
-    padding:   0,
-    display:   'flex',
+    listStyle:     'none',
+    margin:        0,
+    padding:       0,
+    display:       'flex',
     flexDirection: 'column',
-    gap:       '6px',
+    gap:           '6px',
   },
   recentItem: {
-    display:    'flex',
-    alignItems: 'baseline',
-    gap:        '8px',
-    fontSize:   '12px',
+    display:     'flex',
+    alignItems:  'baseline',
+    gap:         '8px',
+    fontSize:    '12px',
     paddingLeft: '8px',
-    borderLeft: `2px solid ${THEME.primary}`,
+    borderLeft:  `2px solid ${THEME.primary}`,
   },
   recentDate: {
     fontSize:   '10px',
     fontWeight: 800,
-    color:      THEME.primary,
+    color:      '#FFD700',
     flexShrink: 0,
     minWidth:   '38px',
+    textShadow: '0 0 4px rgba(255,215,0,0.4)',
   },
   recentText: {
-    color:      THEME.text,
+    color:      '#FFFFFF',
     lineHeight: 1.5,
     flex:       1,
   },
   recentScore: {
-    color:      '#FFB400',
+    color:      '#FFD700',
     fontWeight: 900,
     fontSize:   '12px',
+    textShadow: '0 0 4px rgba(255,215,0,0.5)',
   },
+
+  // === 区切り ===
   divider: {
-    display:    'flex',
-    alignItems: 'center',
-    gap:        '10px',
-    marginTop:  '4px',
+    display:      'flex',
+    alignItems:   'center',
+    gap:          '10px',
+    marginTop:    '4px',
     marginBottom: '-4px',
   },
   dividerLine: {
-    flex:      1,
-    height:    '2px',
+    flex:       1,
+    height:     '2px',
     background: `linear-gradient(90deg, transparent, ${THEME.primary} 50%, transparent)`,
   },
   dividerLabel: {
     fontSize:        '12px',
     fontWeight:      900,
-    color:           THEME.primaryDark,
+    color:           '#FFD700',
     letterSpacing:   '0.15em',
     padding:         '4px 12px',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: THEME.bgCard,
     border:          `1px solid ${THEME.primary}`,
     borderRadius:    '999px',
+    textShadow:      '0 0 6px rgba(255,215,0,0.4)',
+    boxShadow:       '0 0 12px rgba(178,34,34,0.30)',
   },
+
+  // === 全評価済み ===
   allDoneBox: {
     display:    'flex',
     alignItems: 'center',
     gap:        '12px',
     padding:    '14px',
-    backgroundColor: '#E5F4E5',
-    border:     '1px solid #1E7C3A',
-    borderLeft: '4px solid #1E7C3A',
-    borderRadius:'10px',
+    backgroundColor: 'rgba(30,124,58,0.18)',
+    border:     '1px solid #7FFFAA',
+    borderLeft: '4px solid #7FFFAA',
+    borderRadius: '10px',
+    boxShadow:  'inset 0 0 16px rgba(30,124,58,0.20)',
   },
   allDoneIcon: {
-    fontSize: '28px',
-    flexShrink: 0,
+    fontSize:    '28px',
+    flexShrink:  0,
+    filter:      'drop-shadow(0 0 6px rgba(127,255,170,0.5))',
   },
   allDoneTitle: {
-    fontSize:   '14px',
-    fontWeight: 900,
-    color:      '#1E7C3A',
+    fontSize:     '14px',
+    fontWeight:   900,
+    color:        '#7FFFAA',
     marginBottom: '2px',
+    textShadow:   '0 0 6px rgba(127,255,170,0.5)',
   },
   allDoneDetail: {
     fontSize:   '12px',
-    color:      THEME.text,
+    color:      'rgba(255,255,255,0.85)',
     lineHeight: 1.5,
   },
+
+  // === 課題セクション ===
   taskSection: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: THEME.bgCard,
     borderRadius:    '14px',
     padding:         '14px 12px',
     border:          `2px solid ${THEME.primary}`,
-    boxShadow:       '0 4px 12px rgba(178,34,34,0.08)',
+    boxShadow:       '0 6px 24px rgba(0,0,0,0.55), inset 0 0 30px rgba(178,34,34,0.10)',
   },
   taskHeader: {
-    display:    'flex',
-    alignItems: 'center',
-    gap:        '8px',
-    marginBottom: '12px',
+    display:       'flex',
+    alignItems:    'center',
+    gap:           '8px',
+    marginBottom:  '12px',
     paddingBottom: '8px',
-    borderBottom: `2px solid ${THEME.primary}`,
+    borderBottom:  `2px solid ${THEME.primary}`,
   },
   taskIcon: {
     fontSize: '20px',
   },
   taskTitle: {
-    margin:     0,
-    fontSize:   '17px',
-    fontWeight: 900,
-    color:      THEME.primaryDark,
-    flex:       1,
+    margin:        0,
+    fontSize:      '17px',
+    fontWeight:    900,
+    color:         '#FFD700',
+    flex:          1,
+    letterSpacing: '0.05em',
+    textShadow:    '0 0 6px rgba(255,215,0,0.4)',
   },
   taskCount: {
     fontSize:        '11px',
-    fontWeight:      700,
-    color:           THEME.textMuted,
-    backgroundColor: '#FFF8F8',
+    fontWeight:      900,
+    color:           '#FFFFFF',
+    backgroundColor: 'rgba(255,255,255,0.08)',
     padding:         '3px 10px',
     borderRadius:    '999px',
-    border:          `1px solid ${THEME.border}`,
+    border:          '1px solid rgba(255,255,255,0.2)',
+    letterSpacing:   '0.05em',
   },
   taskList: {
     display:       'flex',
     flexDirection: 'column',
     gap:           '10px',
   },
-  commentSection: {
-    backgroundColor: '#FFFFFF',
-    borderRadius:    '12px',
-    padding:         '14px',
-    border:          `1px solid ${THEME.border}`,
-  },
-  commentLabel: {
-    display:    'block',
-    fontSize:   '12px',
-    fontWeight: 800,
-    color:      THEME.primaryDark,
-    marginBottom: '6px',
-  },
-  commentInput: {
-    width:           '100%',
-    padding:         '10px 12px',
-    fontSize:        '13px',
-    fontFamily:      'inherit',
-    color:           THEME.text,
-    backgroundColor: '#FFF8F8',
-    border:          `1.5px solid ${THEME.border}`,
-    borderRadius:    '8px',
-    outline:         'none',
-    resize:          'vertical',
-    minHeight:       '60px',
-    boxSizing:       'border-box',
-    lineHeight:      1.5,
-  },
-  commentLimit: {
-    fontSize:  '10px',
-    color:     THEME.textMuted,
-    textAlign: 'right',
-    marginTop: '4px',
-  },
+
+  // === 固定フッター ===
   fixedFooter: {
     position:        'fixed',
     bottom:          'calc(64px + env(safe-area-inset-bottom, 0))',
     left:            0,
     right:           0,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: THEME.bgCard,
     borderTop:       `3px solid ${THEME.primary}`,
-    boxShadow:       '0 -4px 16px rgba(178,34,34,0.20)',
+    boxShadow:       '0 -4px 24px rgba(178,34,34,0.40)',
     zIndex:          50,
   },
   footerInner: {
@@ -879,13 +925,14 @@ const styles: Record<string, React.CSSProperties> = {
     gap:           '8px',
   },
   previewBar: {
-    display:        'flex',
-    justifyContent: 'space-between',
-    alignItems:     'center',
-    padding:        '8px 14px',
-    backgroundColor: '#FFF8F8',
-    borderRadius:   '8px',
-    border:         `1px solid ${THEME.primary}`,
+    display:         'flex',
+    justifyContent:  'space-between',
+    alignItems:      'center',
+    padding:         '8px 14px',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius:    '8px',
+    border:          `1px solid ${THEME.primary}`,
+    boxShadow:       'inset 0 0 12px rgba(178,34,34,0.20)',
   },
   previewLeft: {
     display:    'flex',
@@ -898,7 +945,7 @@ const styles: Record<string, React.CSSProperties> = {
   previewLabel: {
     fontSize:   '13px',
     fontWeight: 700,
-    color:      THEME.textMuted,
+    color:      'rgba(255,255,255,0.8)',
   },
   previewRight: {
     display:    'flex',
@@ -908,32 +955,35 @@ const styles: Record<string, React.CSSProperties> = {
   previewXp: {
     fontSize:   '24px',
     fontWeight: 900,
-    color:      THEME.primary,
+    color:      '#FFD700',
     lineHeight: 1,
+    textShadow: '0 0 8px rgba(255,215,0,0.6)',
   },
   previewUnit: {
     fontSize:   '13px',
     fontWeight: 900,
-    color:      THEME.primaryDark,
+    color:      '#FFFFFF',
   },
   previewBoost: {
     fontSize:        '11px',
     fontWeight:      900,
-    color:           '#FFFFFF',
-    backgroundColor: THEME.accent,
+    color:           '#2D0B0B',
+    backgroundColor: '#FFD700',
     padding:         '2px 6px',
     borderRadius:    '4px',
     marginLeft:      '4px',
     animation:       'burning_boost_pulse 1.4s ease-in-out infinite',
+    boxShadow:       '0 0 10px rgba(255,215,0,0.7)',
   },
   errorBox: {
     padding:         '8px 12px',
-    backgroundColor: '#FDECEA',
-    border:          '1px solid #C0392B',
+    backgroundColor: 'rgba(220,20,60,0.18)',
+    border:          '1px solid #FF5555',
     borderRadius:    '6px',
-    color:           '#C0392B',
+    color:           '#FFCCCC',
     fontSize:        '12px',
-    fontWeight:      700,
+    fontWeight:      900,
+    textShadow:      '0 1px 2px rgba(0,0,0,0.5)',
   },
   submitBtn: {
     width:           '100%',
@@ -943,10 +993,10 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight:      900,
     color:           '#FFFFFF',
     background:      `linear-gradient(180deg, #D94545 0%, ${THEME.primary} 50%, ${THEME.primaryDark} 100%)`,
-    border:          `2px solid ${THEME.primaryDark}`,
+    border:          '2px solid #FFD700',
     borderRadius:    '12px',
     cursor:          'pointer',
-    boxShadow:       `0 4px 0 ${THEME.primaryDark}, 0 6px 12px rgba(178,34,34,0.3)`,
+    boxShadow:       `0 4px 0 ${THEME.primaryDark}, 0 6px 16px rgba(255,215,0,0.30), 0 0 24px rgba(178,34,34,0.40)`,
     letterSpacing:   '0.1em',
     transition:      'transform 0.08s ease',
     display:         'flex',
@@ -954,12 +1004,15 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent:  'center',
     gap:             '10px',
     WebkitTapHighlightColor: 'transparent',
+    textShadow:      '0 1px 2px rgba(0,0,0,0.6)',
   },
   submitBtnDisabled: {
-    opacity:    0.5,
+    opacity:    0.65,
     cursor:     'not-allowed',
-    background: `linear-gradient(180deg, #C99 0%, #A77 100%)`,
-    boxShadow:  '0 4px 0 #855',
+    background: `linear-gradient(180deg, #5A2C2C 0%, #3A1818 100%)`,
+    boxShadow:  '0 4px 0 #1A0505',
+    color:      'rgba(255,255,255,0.85)',
+    border:     '2px solid rgba(255,255,255,0.25)',
   },
   submitIcon: {
     fontSize: '22px',
@@ -967,11 +1020,11 @@ const styles: Record<string, React.CSSProperties> = {
   submitBoostBadge: {
     fontSize:        '12px',
     fontWeight:      900,
-    color:           THEME.primaryDark,
-    backgroundColor: THEME.accent,
+    color:           '#2D0B0B',
+    backgroundColor: '#FFD700',
     padding:         '3px 8px',
     borderRadius:    '4px',
-    boxShadow:       '0 0 6px rgba(255,215,0,0.6)',
+    boxShadow:       '0 0 10px rgba(255,215,0,0.8)',
   },
   spinner: {
     display:        'inline-block',
@@ -982,6 +1035,8 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius:   '50%',
     animation:      'burning_record_spin 0.8s linear infinite',
   },
+
+  // === ローディング ===
   loadingBox: {
     minHeight:      '100vh',
     display:        'flex',
@@ -989,54 +1044,65 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems:     'center',
     justifyContent: 'center',
     padding:        '32px',
-    backgroundColor: THEME.bgSoft,
+    backgroundColor: THEME.bg,
+    background: `
+      radial-gradient(circle at 50% 30%, rgba(178,34,34,0.20) 0%, transparent 50%),
+      linear-gradient(180deg, ${THEME.bgSoft} 0%, ${THEME.bg} 100%)
+    `,
     textAlign:      'center',
   },
   loadingFlame: {
-    fontSize:  '64px',
-    animation: 'burning_load_flame 1.4s ease-in-out infinite',
+    fontSize:     '64px',
+    animation:    'burning_load_flame 1.4s ease-in-out infinite',
     marginBottom: '16px',
+    filter:       'drop-shadow(0 0 12px rgba(255,68,68,0.6))',
   },
   loadingText: {
-    fontSize:   '15px',
-    fontWeight: 700,
-    color:      THEME.primaryDark,
-    margin:     0,
+    fontSize:      '15px',
+    fontWeight:    900,
+    color:         '#FFD700',
+    margin:        0,
+    textShadow:    '0 0 6px rgba(255,215,0,0.5)',
+    letterSpacing: '0.1em',
   },
   errorBtn: {
-    marginTop: '20px',
-    padding:   '12px 28px',
-    fontSize:  '15px',
-    fontWeight: 900,
-    color:     '#FFFFFF',
-    background: `linear-gradient(180deg, ${THEME.primary} 0%, ${THEME.primaryDark} 100%)`,
-    border:    'none',
-    borderRadius: '8px',
-    cursor:    'pointer',
+    marginTop:     '20px',
+    padding:       '12px 28px',
+    fontSize:      '15px',
+    fontWeight:    900,
+    color:         '#FFFFFF',
+    background:    `linear-gradient(180deg, ${THEME.primary} 0%, ${THEME.primaryDark} 100%)`,
+    border:        '2px solid #FFD700',
+    borderRadius:  '8px',
+    cursor:        'pointer',
+    letterSpacing: '0.05em',
   },
 };
 
+// =====================================================================
+// 成功モーダル スタイル
+// =====================================================================
 const modalStyles: Record<string, React.CSSProperties> = {
   overlay: {
     position:        'fixed',
     inset:           0,
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    backgroundColor: 'rgba(0,0,0,0.75)',
     display:         'flex',
     alignItems:      'center',
     justifyContent:  'center',
     padding:         '20px',
     zIndex:          1000,
-    backdropFilter:  'blur(2px)',
+    backdropFilter:  'blur(4px)',
   },
   modal: {
     position:        'relative',
     width:           '100%',
     maxWidth:        '420px',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: THEME.bgCard,
     borderRadius:    '20px',
-    border:          `3px solid ${THEME.accent}`,
+    border:          '3px solid #FFD700',
     padding:         '28px 24px 24px',
-    boxShadow:       '0 12px 48px rgba(178,34,34,0.4)',
+    boxShadow:       '0 16px 64px rgba(0,0,0,0.7), 0 0 32px rgba(255,215,0,0.35), 0 0 48px rgba(178,34,34,0.40)',
     animation:       'burning_success_in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both',
     overflow:        'hidden',
     textAlign:       'center',
@@ -1050,11 +1116,11 @@ const modalStyles: Record<string, React.CSSProperties> = {
     background: `conic-gradient(
       from 0deg,
       transparent 0deg,
-      rgba(255,215,0,0.18) 60deg,
+      rgba(255,215,0,0.30) 60deg,
       transparent 120deg,
-      rgba(178,34,34,0.15) 180deg,
+      rgba(178,34,34,0.30) 180deg,
       transparent 240deg,
-      rgba(255,215,0,0.18) 300deg,
+      rgba(255,215,0,0.30) 300deg,
       transparent 360deg
     )`,
     animation:     'burning_success_aura 8s linear infinite',
@@ -1062,36 +1128,39 @@ const modalStyles: Record<string, React.CSSProperties> = {
     zIndex:        0,
   },
   checkmark: {
-    position:  'relative',
-    fontSize:  '56px',
+    position:     'relative',
+    fontSize:     '56px',
     marginBottom: '8px',
+    filter:       'drop-shadow(0 0 12px rgba(127,255,170,0.7))',
   },
   title: {
-    position:   'relative',
-    margin:     0,
-    fontSize:   '24px',
-    fontWeight: 900,
-    color:      THEME.primaryDark,
-    letterSpacing: '0.05em',
+    position:      'relative',
+    margin:        0,
+    fontSize:      '26px',
+    fontWeight:    900,
+    color:         '#FFD700',
+    letterSpacing: '0.08em',
+    textShadow:    '0 0 12px rgba(255,215,0,0.7), 2px 2px 0 rgba(178,34,34,0.5)',
   },
   subtitle: {
-    position:   'relative',
-    margin:     '8px 0 16px',
-    fontSize:   '13px',
-    color:      THEME.text,
+    position: 'relative',
+    margin:   '8px 0 16px',
+    fontSize: '13px',
+    color:    'rgba(255,255,255,0.85)',
   },
   xpBox: {
     position:        'relative',
-    backgroundColor: '#FFFEF0',
-    border:          `2px solid ${THEME.accent}`,
+    backgroundColor: 'rgba(255,215,0,0.10)',
+    border:          '2px solid #FFD700',
     borderRadius:    '12px',
     padding:         '14px',
     marginBottom:    '20px',
+    boxShadow:       'inset 0 0 16px rgba(255,215,0,0.18), 0 0 16px rgba(255,215,0,0.30)',
   },
   xpLabel: {
     fontSize:      '11px',
     fontWeight:    700,
-    color:         THEME.textMuted,
+    color:         'rgba(255,255,255,0.7)',
     letterSpacing: '0.15em',
     marginBottom:  '4px',
   },
@@ -1104,33 +1173,35 @@ const modalStyles: Record<string, React.CSSProperties> = {
   xpPlus: {
     fontSize:   '24px',
     fontWeight: 900,
-    color:      THEME.primary,
+    color:      '#FFD700',
+    textShadow: '0 0 8px rgba(255,215,0,0.6)',
   },
   xpValue: {
     fontSize:    '52px',
     fontWeight:  900,
-    color:       THEME.primary,
+    color:       '#FFD700',
     lineHeight:  1,
-    textShadow:  '2px 2px 0 rgba(255,215,0,0.4)',
+    textShadow:  '0 0 12px rgba(255,215,0,0.8), 2px 2px 0 rgba(178,34,34,0.5)',
     animation:   'burning_success_xp 0.6s ease-out',
   },
   xpUnit: {
     fontSize:   '20px',
     fontWeight: 900,
-    color:      THEME.primaryDark,
+    color:      '#FFFFFF',
   },
   xpBoost: {
-    fontSize:    '12px',
-    fontWeight:  900,
-    color:       '#B8860B',
-    marginTop:   '4px',
+    fontSize:      '12px',
+    fontWeight:    900,
+    color:         '#FFD700',
+    marginTop:     '4px',
     letterSpacing: '0.1em',
+    textShadow:    '0 0 6px rgba(255,215,0,0.5)',
   },
   btnRow: {
-    position: 'relative',
-    display:  'flex',
+    position:      'relative',
+    display:       'flex',
     flexDirection: 'column',
-    gap:      '8px',
+    gap:           '8px',
   },
   continueBtn: {
     minHeight:     '48px',
@@ -1139,21 +1210,23 @@ const modalStyles: Record<string, React.CSSProperties> = {
     fontWeight:    900,
     color:         '#FFFFFF',
     background:    `linear-gradient(180deg, ${THEME.primary} 0%, ${THEME.primaryDark} 100%)`,
-    border:        'none',
+    border:        '2px solid #FFD700',
     borderRadius:  '10px',
     cursor:        'pointer',
-    boxShadow:     `0 4px 0 ${THEME.primaryDark}`,
+    boxShadow:     `0 4px 0 ${THEME.primaryDark}, 0 0 16px rgba(255,215,0,0.40)`,
     letterSpacing: '0.05em',
+    textShadow:    '0 1px 2px rgba(0,0,0,0.6)',
   },
   backBtn: {
     minHeight:       '44px',
     padding:         '10px',
     fontSize:        '13px',
-    fontWeight:      700,
-    color:           THEME.primaryDark,
-    backgroundColor: '#FFFFFF',
+    fontWeight:      900,
+    color:           '#FFFFFF',
+    backgroundColor: 'rgba(255,255,255,0.05)',
     border:          `1.5px solid ${THEME.primary}`,
     borderRadius:    '8px',
     cursor:          'pointer',
+    letterSpacing:   '0.05em',
   },
 };

@@ -14,7 +14,6 @@ import { THEME } from '@/types';
 
 import StatusCard       from '@/components/StatusCard';
 import TaskReportCard   from '@/components/TaskReportCard';
-import XpTimelineChart  from '@/components/XpTimelineChart';
 import SkillTriangle    from '@/components/SkillTriangle';
 
 export default function StudentDashboardPage() {
@@ -81,6 +80,13 @@ export default function StudentDashboardPage() {
   };
 
   // ---------------------------------------------------------------
+  // 記録画面へ遷移
+  // ---------------------------------------------------------------
+  const handleGoRecord = () => {
+    router.push('/record');
+  };
+
+  // ---------------------------------------------------------------
   // メインビュー
   // ---------------------------------------------------------------
   return (
@@ -109,7 +115,27 @@ export default function StudentDashboardPage() {
           userName={data.user.name}
           status={data.status}
           titleMaster={data.titleMaster}
+          xpHistory={data.xpHistory}
         />
+
+        {/* ★ 記録CTA（メインアクション） */}
+        <button
+          onClick={handleGoRecord}
+          style={styles.recordCta}
+          onTouchStart={(e) => e.currentTarget.style.transform = 'scale(0.97)'}
+          onTouchEnd={(e) => e.currentTarget.style.transform = 'scale(1)'}
+          onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.97)'}
+          onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
+          onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+          aria-label="今日の修行を記録する"
+        >
+          <span style={styles.recordCtaIcon}>📝</span>
+          <span style={styles.recordCtaText}>
+            <span style={styles.recordCtaMain}>今日の修行を記録する</span>
+            <span style={styles.recordCtaSub}>稽古をきろくして経験値ゲット！</span>
+          </span>
+          <span style={styles.recordCtaFlame}>🔥</span>
+        </button>
 
         {/* 減衰アラート（あれば） */}
         {data.decay && data.decay.applied < 0 && (
@@ -119,7 +145,7 @@ export default function StudentDashboardPage() {
               <div style={styles.decayTitle}>修行をサボっているぞ！</div>
               <div style={styles.decayDetail}>
                 {data.decay.days_absent}日サボって
-                <strong style={{ color: THEME.primary, marginLeft: 4 }}>
+                <strong style={{ color: THEME.accent, marginLeft: 4 }}>
                   {data.decay.applied} XP
                 </strong>
                 修行値が減ってしまった…
@@ -135,37 +161,11 @@ export default function StudentDashboardPage() {
         <TaskReportCard
           taskMaster={data.taskMaster}
           taskLogs={data.taskLogs}
+          teacherEvals={data.teacherEvals ?? []}
           windowDays={30}
         />
 
-        {/* 区切り */}
-        <Divider label="📈 修行値のあゆみ" />
-
-        {/* ③ XP推移 */}
-        <section style={styles.chartCard}>
-          <header style={styles.chartHeader}>
-            <span style={styles.chartIcon}>🔥</span>
-            <h3 style={styles.chartTitle}>経験値のうつりかわり</h3>
-          </header>
-          <XpTimelineChart xpHistory={data.xpHistory} />
-          <footer style={styles.chartFooter}>
-            <span style={styles.legendItem}>
-              <span style={{ ...styles.legendDot, background: THEME.primary }} /> 稽古
-            </span>
-            <span style={styles.legendItem}>
-              <span style={{ ...styles.legendDot, background: THEME.accent }} /> 先生評価
-            </span>
-            <span style={styles.legendItem}>
-              <span style={{ ...styles.legendDot, background: '#1E7C3A' }} /> ミニゲーム
-            </span>
-            <span style={styles.legendItem}>
-              <span style={{ ...styles.legendDot, background: '#999' }} /> サボリ減衰
-            </span>
-          </footer>
-        </section>
-
-        {/* 区切り */}
-        <Divider label="⚔️ 心・技・体" />
+        <Divider label="⚔️ 技の修得" />
 
         {/* ④ 三角形レーダー */}
         <SkillTriangle
@@ -173,9 +173,41 @@ export default function StudentDashboardPage() {
           saturationPoints={500}
         />
 
+        {/* 下部にもう一度CTAを配置（スクロールしてきた剣士向け） */}
+        <button
+          onClick={handleGoRecord}
+          style={styles.recordCtaBottom}
+          onTouchStart={(e) => e.currentTarget.style.transform = 'scale(0.97)'}
+          onTouchEnd={(e) => e.currentTarget.style.transform = 'scale(1)'}
+          onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.97)'}
+          onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
+          onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+        >
+          <span style={{ fontSize: '20px' }}>⚔️</span>
+          <span>修行をきろくする</span>
+          <span style={{ fontSize: '18px' }}>🔥</span>
+        </button>
+
         {/* フッター余白 */}
         <div style={{ height: 40 }} />
       </div>
+
+      <style>{`
+        @keyframes burning_cta_glow {
+          0%, 100% {
+            box-shadow:
+              0 4px 0 ${THEME.primaryDark},
+              0 6px 16px rgba(178,34,34,0.35),
+              0 0 0 0 rgba(255,215,0,0);
+          }
+          50% {
+            box-shadow:
+              0 4px 0 ${THEME.primaryDark},
+              0 6px 16px rgba(178,34,34,0.45),
+              0 0 0 4px rgba(255,215,0,0.25);
+          }
+        }
+      `}</style>
     </div>
   );
 }
@@ -248,19 +280,20 @@ function DashboardSkeleton() {
 // =====================================================================
 const styles: Record<string, React.CSSProperties> = {
   outer: {
-    position:       'relative',
-    minHeight:      '100vh',
-    width:          '100%',
-    backgroundColor: THEME.bgSoft,
-    overflow:       'hidden',
+    position:        'relative',
+    minHeight:       '100vh',
+    width:           '100%',
+    backgroundColor: THEME.bg,
+    overflow:        'hidden',
   },
   bgPattern: {
     position: 'fixed',
     inset:    0,
     background: `
-      radial-gradient(circle at 10% 5%, rgba(178,34,34,0.04) 0%, transparent 30%),
-      radial-gradient(circle at 90% 95%, rgba(255,215,0,0.04) 0%, transparent 30%),
-      linear-gradient(180deg, ${THEME.bg} 0%, ${THEME.bgSoft} 100%)
+      radial-gradient(circle at 15% 8%, rgba(255,68,68,0.22) 0%, transparent 38%),
+      radial-gradient(circle at 85% 92%, rgba(255,215,0,0.10) 0%, transparent 35%),
+      radial-gradient(circle at 50% 50%, rgba(0,0,0,0.18) 0%, transparent 70%),
+      linear-gradient(180deg, ${THEME.bgSoft} 0%, ${THEME.bg} 55%, ${THEME.primaryDark} 100%)
     `,
     zIndex:        0,
     pointerEvents: 'none',
@@ -282,10 +315,10 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'space-between',
     alignItems:     'center',
     padding:        '10px 12px',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: THEME.bgCard,
     borderRadius:   '12px',
-    border:         `2px solid ${THEME.primary}`,
-    boxShadow:      '0 2px 8px rgba(178,34,34,0.10)',
+    border:         `2px solid ${THEME.borderSolid}`,
+    boxShadow:      '0 4px 16px rgba(0,0,0,0.35)',
   },
   headerLeft: {
     display:    'flex',
@@ -298,19 +331,92 @@ const styles: Record<string, React.CSSProperties> = {
   headerTitle: {
     fontSize:   '17px',
     fontWeight: 900,
-    color:      THEME.primary,
+    color:      THEME.text,
     letterSpacing: '0.05em',
   },
   logoutBtn: {
     padding:         '6px 14px',
     fontSize:        '12px',
     fontWeight:      700,
-    color:           THEME.primaryDark,
-    backgroundColor: '#FFFFFF',
-    border:          `1.5px solid ${THEME.primary}`,
+    color:           THEME.text,
+    backgroundColor: 'transparent',
+    border:          `1.5px solid ${THEME.borderSolid}`,
     borderRadius:    '999px',
     cursor:          'pointer',
     transition:      'all 0.15s ease',
+  },
+
+  // ★ 記録CTA（トップ・大型）
+  recordCta: {
+    width:           '100%',
+    minHeight:       '72px',
+    padding:         '14px 18px',
+    fontFamily:      'inherit',
+    fontSize:        '17px',
+    fontWeight:      900,
+    color:           '#FFFFFF',
+    background:      `linear-gradient(180deg, #FF5555 0%, ${THEME.primary} 45%, ${THEME.primaryDark} 100%)`,
+    border:          `2px solid ${THEME.borderSolid}`,
+    borderRadius:    '14px',
+    cursor:          'pointer',
+    letterSpacing:   '0.05em',
+    transition:      'transform 0.08s ease',
+    display:         'flex',
+    alignItems:      'center',
+    gap:             '14px',
+    animation:       'burning_cta_glow 2.4s ease-in-out infinite',
+    WebkitTapHighlightColor: 'transparent',
+    boxShadow:       '0 4px 20px rgba(255,68,68,0.45)',
+  },
+  recordCtaIcon: {
+    fontSize:    '32px',
+    flexShrink:  0,
+  },
+  recordCtaText: {
+    flex:           1,
+    display:        'flex',
+    flexDirection:  'column',
+    alignItems:     'flex-start',
+    gap:            '2px',
+  },
+  recordCtaMain: {
+    fontSize:   '17px',
+    fontWeight: 900,
+  },
+  recordCtaSub: {
+    fontSize:   '11px',
+    fontWeight: 600,
+    opacity:    0.85,
+    color:      THEME.textMuted,
+    letterSpacing: '0.05em',
+  },
+  recordCtaFlame: {
+    fontSize:   '24px',
+    flexShrink: 0,
+  },
+
+  // 下部の控えめCTA
+  recordCtaBottom: {
+    width:           '100%',
+    minHeight:       '54px',
+    padding:         '14px',
+    fontFamily:      'inherit',
+    fontSize:        '16px',
+    fontWeight:      900,
+    color:           '#FFFFFF',
+    background:      `linear-gradient(180deg, ${THEME.primary} 0%, ${THEME.primaryDark} 100%)`,
+    border:          `2px solid ${THEME.borderSolid}`,
+    borderRadius:    '12px',
+    cursor:          'pointer',
+    letterSpacing:   '0.1em',
+    transition:      'transform 0.08s ease',
+    display:         'flex',
+    alignItems:      'center',
+    justifyContent:  'center',
+    gap:             '10px',
+    boxShadow:       '0 4px 16px rgba(0,0,0,0.4)',
+    marginTop:       '8px',
+    WebkitTapHighlightColor: 'transparent',
   },
 
   // 区切り
@@ -324,28 +430,27 @@ const styles: Record<string, React.CSSProperties> = {
   dividerLine: {
     flex:      1,
     height:    '2px',
-    background: `linear-gradient(90deg, transparent, ${THEME.primary} 50%, transparent)`,
+    background: `linear-gradient(90deg, transparent, rgba(255,255,255,0.55) 50%, transparent)`,
   },
   dividerLabel: {
     fontSize:        '12px',
     fontWeight:      900,
-    color:           THEME.primaryDark,
+    color:           THEME.text,
     letterSpacing:   '0.15em',
     padding:         '4px 12px',
-    backgroundColor: '#FFFFFF',
-    border:          `1px solid ${THEME.primary}`,
+    backgroundColor: THEME.bgCard,
+    border:          `1px solid ${THEME.borderSolid}`,
     borderRadius:    '999px',
   },
 
-  // 減衰アラート
   decayAlert: {
     display:        'flex',
     alignItems:     'flex-start',
     gap:            '12px',
     padding:        '12px 14px',
-    backgroundColor: '#FFF8E0',
-    border:         '1px solid #FFD700',
-    borderLeft:     `4px solid ${THEME.primary}`,
+    backgroundColor: THEME.bgCardDeep,
+    border:         `1px solid ${THEME.accent}`,
+    borderLeft:     `4px solid ${THEME.accent}`,
     borderRadius:   '10px',
   },
   decayIcon: {
@@ -355,57 +460,13 @@ const styles: Record<string, React.CSSProperties> = {
   decayTitle: {
     fontSize:   '14px',
     fontWeight: 900,
-    color:      THEME.primaryDark,
+    color:      THEME.text,
     marginBottom: '2px',
   },
   decayDetail: {
     fontSize: '12px',
-    color:    THEME.text,
+    color:    THEME.textMuted,
     lineHeight: 1.5,
-  },
-
-  // チャートカード
-  chartCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius:    '16px',
-    padding:         '20px 18px 14px',
-    border:          `2px solid ${THEME.primary}`,
-    boxShadow:       `0 4px 16px rgba(178, 34, 34, 0.10)`,
-  },
-  chartHeader: {
-    display:    'flex',
-    alignItems: 'center',
-    gap:        '8px',
-    marginBottom: '8px',
-  },
-  chartIcon: {
-    fontSize: '20px',
-  },
-  chartTitle: {
-    margin:     0,
-    fontSize:   '18px',
-    fontWeight: 900,
-    color:      THEME.primaryDark,
-  },
-  chartFooter: {
-    display:    'flex',
-    flexWrap:   'wrap',
-    gap:        '12px',
-    marginTop:  '8px',
-    paddingTop: '8px',
-    borderTop:  `1px dashed ${THEME.border}`,
-    fontSize:   '11px',
-    color:      THEME.textMuted,
-  },
-  legendItem: {
-    display:    'inline-flex',
-    alignItems: 'center',
-    gap:        '4px',
-  },
-  legendDot: {
-    width:        '8px',
-    height:       '8px',
-    borderRadius: '50%',
   },
 
   // エラー
@@ -416,7 +477,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems:     'center',
     justifyContent: 'center',
     padding:        '32px',
-    backgroundColor: THEME.bgSoft,
+    backgroundColor: THEME.bg,
     textAlign:      'center',
   },
   errorIcon: {
@@ -426,7 +487,7 @@ const styles: Record<string, React.CSSProperties> = {
   errorTitle: {
     fontSize:   '20px',
     fontWeight: 900,
-    color:      THEME.primaryDark,
+    color:      THEME.text,
     margin:     '0 0 8px',
   },
   errorMessage: {
@@ -458,26 +519,26 @@ const styles: Record<string, React.CSSProperties> = {
   skeletonTitle: {
     fontSize:   '15px',
     fontWeight: 700,
-    color:      THEME.primaryDark,
+    color:      THEME.textMuted,
     margin:     '12px 0 16px',
   },
   skeletonSpinner: {
     display:        'inline-block',
     width:          '32px',
     height:         '32px',
-    border:         `4px solid ${THEME.bgPattern}`,
-    borderTopColor: THEME.primary,
+    border:         `4px solid rgba(255,255,255,0.15)`,
+    borderTopColor: THEME.accent,
     borderRadius:   '50%',
     animation:      'burning_skel_spin 0.9s linear infinite',
   },
   skeletonCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: THEME.bgCard,
     borderRadius:    '16px',
     padding:         '20px 18px',
-    border:          `2px solid ${THEME.border}`,
+    border:          `2px solid ${THEME.borderSolid}`,
   },
   skeletonBlock: {
-    backgroundColor: '#F5E6E6',
+    backgroundColor: 'rgba(255,255,255,0.12)',
     borderRadius:    '6px',
     animation:       'burning_skel_pulse 1.4s ease-in-out infinite',
   },

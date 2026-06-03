@@ -1,6 +1,7 @@
 // =====================================================================
 // 燃えよ剣士 - GAS Backend (Code.gs)
 // Phase 1.5: 初期化 + 取得系API + 更新系API + ルーティング
+// Phase 4.1: getUserList (公開ログイン用) を追加
 // =====================================================================
 
 const SS_ID = PropertiesService.getScriptProperties().getProperty('SHEET_ID');
@@ -148,6 +149,10 @@ function doGet(e) {
     let result;
 
     switch (action) {
+      // ★ Phase 4.1 追加：ログイン用のユーザー一覧（公開）
+      case 'getUserList':
+        result = getUserList();
+        break;
       case 'getDashboard':
         result = getDashboard(params.user_id);
         break;
@@ -201,6 +206,36 @@ function doPost(e) {
       JSON.stringify(payload).slice(0, 500));
     return _jsonResponse_({ status: 'error', message: err.message });
   }
+}
+
+// =====================================================================
+// 0-A. getUserList : ログイン画面用のユーザー一覧（公開エンドポイント）
+//      個人情報は最小限：id, name, role, grade のみ返却（passcodeは絶対除外）
+// =====================================================================
+function getUserList() {
+  const sh = _sheet_('users');
+  const data = sh.getDataRange().getValues();
+  const users = [];
+
+  for (let i = 1; i < data.length; i++) {
+    const id   = String(data[i][0] || '').trim();
+    const name = String(data[i][1] || '').trim();
+    const role = String(data[i][3] || '').trim();
+
+    // 必須項目が欠けている行はスキップ
+    if (!id || !name || !role) continue;
+    // 想定外のロール値は除外
+    if (role !== 'student' && role !== 'teacher') continue;
+
+    users.push({
+      id:    id,
+      name:  name,
+      role:  role,
+      grade: Number(data[i][4]) || 0,
+    });
+  }
+
+  return { users: users };
 }
 
 // =====================================================================
@@ -469,6 +504,9 @@ function getTeacherDashboard(teacherId) {
   // 全 user_techniques を一括取得（生徒の累計ポイント集計用）
   const techPointsMap = _getAllTechniquePointsMap_();
 
+  // 称号マスタ（フロント側でフォールバック可能だが、ペイロードに含めて整合性確保）
+  const titleMaster = _getTitleMaster_();
+
   const today = new Date(_todayStr_());
 
   const summaries = students.map(s => {
@@ -506,8 +544,9 @@ function getTeacherDashboard(teacherId) {
   });
 
   return {
-    teacher:  teacher,
-    students: summaries,
+    teacher:     teacher,
+    students:    summaries,
+    titleMaster: titleMaster,
   };
 }
 
@@ -538,6 +577,7 @@ function getStudentDetail(teacherId, studentId) {
 
   const taskMaster      = _getTaskMaster_();
   const techniqueMaster = _getTechniqueMaster_();
+  const titleMaster     = _getTitleMaster_();
   const taskMap         = _toMap_(taskMaster, 'id');
   const userMap         = _getAllUsersMap_();
 
@@ -557,6 +597,7 @@ function getStudentDetail(teacherId, studentId) {
     status:                status,
     taskMaster:            taskMaster,
     techniqueMaster:       techniqueMaster,
+    titleMaster:           titleMaster,
     recentLogs:            recentLogs,
     techniques:            techniques,
     todayEvaluatedTaskIds: todayEvaluatedTaskIds,

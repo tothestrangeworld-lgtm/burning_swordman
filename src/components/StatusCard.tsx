@@ -1,7 +1,7 @@
 // src/components/StatusCard.tsx
 // =====================================================================
 // 燃えよ剣士 - ステータスカード
-// レベル・称号・XPバー・かけ声を表示する中核コンポーネント
+// レベル・称号・XPバー・経験値グラフを内包
 // =====================================================================
 
 'use client';
@@ -9,45 +9,43 @@
 import {
   UserStatus,
   TitleMasterEntry,
+  XpHistoryEntry,
   xpForLevel,
   calcProgressPercent,
   titleForLevel,
-  nextTitleLevel,
   levelColor,
   THEME,
   MAX_LEVEL,
 } from '@/types';
 
+import XpTimelineChart from '@/components/XpTimelineChart';
+
 interface Props {
   userName:    string;
   status:      UserStatus;
   titleMaster: TitleMasterEntry[];
+  xpHistory?:  XpHistoryEntry[];
 }
 
-export default function StatusCard({ userName, status, titleMaster }: Props) {
+export default function StatusCard({ userName, status, titleMaster, xpHistory = [] }: Props) {
   const level        = status.level;
   const xp           = status.total_xp;
   const currentTitle = titleForLevel(level, titleMaster);
-  const next         = nextTitleLevel(level, titleMaster);
   const progress     = calcProgressPercent(xp);
   const xpToNext     = level >= MAX_LEVEL ? 0 : xpForLevel(level + 1) - xp;
   const lvColor      = levelColor(level);
 
   return (
     <section style={styles.card}>
-      {/* 背景パターン（和紙・炎） */}
       <div style={styles.bgPattern} aria-hidden="true" />
 
-      {/* 上部ラベル */}
       <div style={styles.miniLabel}>🔥 修行中の剣士</div>
 
-      {/* 名前 */}
       <div style={styles.nameRow}>
         <h2 style={styles.userName}>{userName}</h2>
         <span style={styles.dan}>殿</span>
       </div>
 
-      {/* 称号バナー */}
       <div style={{ ...styles.titleBanner, borderColor: lvColor }}>
         <span style={styles.titleLabel}>称号</span>
         <span style={{ ...styles.titleText, color: lvColor }}>
@@ -55,7 +53,6 @@ export default function StatusCard({ userName, status, titleMaster }: Props) {
         </span>
       </div>
 
-      {/* レベル（特大） */}
       <div style={styles.levelArea}>
         <div style={styles.levelLabel}>修行度</div>
         <div style={styles.levelValueRow}>
@@ -64,12 +61,11 @@ export default function StatusCard({ userName, status, titleMaster }: Props) {
         </div>
       </div>
 
-      {/* XPバー */}
       <div style={styles.xpBarArea}>
         <div style={styles.xpBarLabels}>
           <span style={styles.xpLabel}>つぎの修行まで</span>
           <span style={styles.xpValue}>
-            あと <strong style={{ color: THEME.primary }}>{xpToNext}</strong> XP
+            あと <strong style={{ color: THEME.accent }}>{xpToNext}</strong> XP
           </span>
         </div>
         <div style={styles.xpBarOuter}>
@@ -84,13 +80,10 @@ export default function StatusCard({ userName, status, titleMaster }: Props) {
           </div>
         </div>
         <div style={styles.xpBarFoot}>
-          {progress}% 達成 ／ つぎの称号:{' '}
-          <strong style={{ color: THEME.primaryDark }}>{next?.title ?? '極み'}</strong>
-          {next && <span style={styles.nextLv}>（Lv.{next.level}）</span>}
+          {progress}% 達成 — レベルアップへの道を歩み続けろ！
         </div>
       </div>
 
-      {/* かけ声 */}
       {status.catchphrase && (
         <div style={styles.catchphraseBox}>
           <span style={styles.catchIcon}>💬</span>
@@ -98,12 +91,33 @@ export default function StatusCard({ userName, status, titleMaster }: Props) {
         </div>
       )}
 
-      {/* 累計XP */}
       <div style={styles.totalXpRow}>
         <span style={styles.totalXpLabel}>累計修行値</span>
         <span style={styles.totalXpValue}>
           {xp.toLocaleString()} <span style={styles.totalXpUnit}>XP</span>
         </span>
+      </div>
+
+      <div style={styles.chartSection}>
+        <div style={styles.chartHeader}>
+          <span style={styles.chartIcon}>🔥</span>
+          <h4 style={styles.chartTitle}>経験値のうつりかわり</h4>
+        </div>
+        <XpTimelineChart xpHistory={xpHistory} compact embedded dark />
+        <div style={styles.chartLegend}>
+          <span style={styles.legendItem}>
+            <span style={{ ...styles.legendDot, background: THEME.primary }} /> 稽古
+          </span>
+          <span style={styles.legendItem}>
+            <span style={{ ...styles.legendDot, background: THEME.accent }} /> 先生評価
+          </span>
+          <span style={styles.legendItem}>
+            <span style={{ ...styles.legendDot, background: '#1E7C3A' }} /> ミニゲーム
+          </span>
+          <span style={styles.legendItem}>
+            <span style={{ ...styles.legendDot, background: '#999' }} /> サボリ減衰
+          </span>
+        </div>
       </div>
 
       <style>{`
@@ -118,20 +132,20 @@ export default function StatusCard({ userName, status, titleMaster }: Props) {
 
 const styles: Record<string, React.CSSProperties> = {
   card: {
-    position: 'relative',
-    backgroundColor: '#FFFFFF',
+    position:        'relative',
+    backgroundColor: THEME.bgCard,
     borderRadius:    '16px',
     padding:         '24px 20px',
-    border:          `2px solid ${THEME.primary}`,
-    boxShadow:       `0 4px 16px rgba(178, 34, 34, 0.12)`,
+    border:          `2px solid ${THEME.borderSolid}`,
+    boxShadow:       '0 6px 24px rgba(0,0,0,0.45)',
     overflow:        'hidden',
   },
   bgPattern: {
     position: 'absolute',
     inset:    0,
     background: `
-      radial-gradient(circle at 90% 10%, rgba(255,215,0,0.08) 0%, transparent 35%),
-      radial-gradient(circle at 10% 90%, rgba(178,34,34,0.06) 0%, transparent 35%)
+      radial-gradient(circle at 90% 10%, rgba(255,215,0,0.12) 0%, transparent 35%),
+      radial-gradient(circle at 10% 90%, rgba(255,68,68,0.15) 0%, transparent 35%)
     `,
     pointerEvents: 'none',
   },
@@ -140,8 +154,8 @@ const styles: Record<string, React.CSSProperties> = {
     display:         'inline-block',
     fontSize:        '11px',
     fontWeight:      700,
-    color:           '#FFFFFF',
-    backgroundColor: THEME.primary,
+    color:           THEME.primaryDark,
+    backgroundColor: THEME.accent,
     padding:         '3px 10px',
     borderRadius:    '999px',
     letterSpacing:   '0.05em',
@@ -159,6 +173,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight:    900,
     color:         THEME.text,
     letterSpacing: '0.02em',
+    textShadow:    '0 2px 8px rgba(0,0,0,0.35)',
   },
   dan: {
     fontSize:   '18px',
@@ -172,15 +187,15 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems:      'center',
     gap:             '10px',
     padding:         '10px 14px',
-    backgroundColor: '#FFF8F8',
-    border:          '2px solid',
+    backgroundColor: THEME.bgCardDeep,
+    border:          `2px solid ${THEME.border}`,
     borderRadius:    '8px',
   },
   titleLabel: {
     fontSize:        '11px',
     fontWeight:      700,
-    color:           '#FFFFFF',
-    backgroundColor: THEME.primaryDark,
+    color:           THEME.primaryDark,
+    backgroundColor: THEME.accent,
     padding:         '2px 8px',
     borderRadius:    '4px',
   },
@@ -212,7 +227,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight:    900,
     lineHeight:    1,
     letterSpacing: '-0.02em',
-    textShadow:    '2px 2px 0 rgba(178,34,34,0.15)',
+    textShadow:    '0 0 24px rgba(255,215,0,0.35)',
   },
   levelMax: {
     fontSize:   '18px',
@@ -243,11 +258,11 @@ const styles: Record<string, React.CSSProperties> = {
     position:        'relative',
     width:           '100%',
     height:          '18px',
-    backgroundColor: '#F5E6E6',
+    backgroundColor: THEME.bgCardDeep,
     borderRadius:    '999px',
-    border:          `2px solid ${THEME.primaryDark}`,
+    border:          `2px solid ${THEME.borderSolid}`,
     overflow:        'hidden',
-    boxShadow:       'inset 0 2px 4px rgba(0,0,0,0.1)',
+    boxShadow:       'inset 0 2px 6px rgba(0,0,0,0.45)',
   },
   xpBarInner: {
     position:     'relative',
@@ -262,18 +277,15 @@ const styles: Record<string, React.CSSProperties> = {
     left:       0,
     width:      '40%',
     height:     '100%',
-    background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.6), transparent)',
+    background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent)',
     animation:  'burning_xp_shine 2.4s ease-in-out infinite',
   },
   xpBarFoot: {
-    marginTop: '6px',
-    fontSize:  '11px',
-    color:     THEME.textMuted,
-  },
-  nextLv: {
-    marginLeft: '4px',
+    marginTop:  '6px',
+    fontSize:   '11px',
     fontWeight: 700,
-    color:      THEME.primary,
+    color:      THEME.textMuted,
+    fontStyle:  'italic',
   },
   catchphraseBox: {
     position:        'relative',
@@ -282,7 +294,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems:      'center',
     gap:             '8px',
     padding:         '10px 14px',
-    backgroundColor: '#FFFEF0',
+    backgroundColor: THEME.bgCardDeep,
     border:          `1px dashed ${THEME.accent}`,
     borderRadius:    '8px',
   },
@@ -292,7 +304,7 @@ const styles: Record<string, React.CSSProperties> = {
   catchText: {
     fontSize:   '14px',
     fontWeight: 700,
-    color:      THEME.primaryDark,
+    color:      THEME.text,
     fontStyle:  'italic',
   },
   totalXpRow: {
@@ -313,12 +325,53 @@ const styles: Record<string, React.CSSProperties> = {
   totalXpValue: {
     fontSize:   '20px',
     fontWeight: 900,
-    color:      THEME.primaryDark,
+    color:      THEME.accent,
+    textShadow: '0 0 12px rgba(255,215,0,0.35)',
   },
   totalXpUnit: {
     fontSize:   '12px',
     fontWeight: 700,
     color:      THEME.textMuted,
     marginLeft: '2px',
+  },
+  chartSection: {
+    position:   'relative',
+    marginTop:  '16px',
+    paddingTop: '14px',
+    borderTop:  `1px dashed ${THEME.border}`,
+  },
+  chartHeader: {
+    display:      'flex',
+    alignItems:   'center',
+    gap:          '6px',
+    marginBottom: '4px',
+  },
+  chartIcon: {
+    fontSize: '16px',
+  },
+  chartTitle: {
+    margin:        0,
+    fontSize:      '14px',
+    fontWeight:    900,
+    color:         THEME.text,
+    letterSpacing: '0.04em',
+  },
+  chartLegend: {
+    display:    'flex',
+    flexWrap:   'wrap',
+    gap:        '10px',
+    marginTop:  '6px',
+    fontSize:   '10px',
+    color:      THEME.textSubtle,
+  },
+  legendItem: {
+    display:    'inline-flex',
+    alignItems: 'center',
+    gap:        '4px',
+  },
+  legendDot: {
+    width:        '7px',
+    height:       '7px',
+    borderRadius: '50%',
   },
 };
