@@ -1,7 +1,7 @@
-// src/app/teacher/bulk/page.tsx
+// src/app/teacher/[studentId]/page.tsx
 // =====================================================================
-// 燃えよ剣士 - 全体評価画面（熱血ダークテーマ版）
-// 先生が複数生徒をまとめて評価 → XP5倍ボーナス付与
+// 燃えよ剣士 - 個別生徒評価画面（熱血ダークテーマ版・日付表示修正）
+// 先生がスマホでサクサク評価→XP10倍ボーナス付与
 // =====================================================================
 
 'use client';
@@ -9,15 +9,20 @@
 export const runtime = 'edge';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useParams } from 'next/navigation';
 import {
+  useStudentDetailSWR,
+  evaluateStudent,
   useMyTeacherDashboardSWR,
-  evaluateBulkStudents,
 } from '@/lib/api';
 import { getAuthUser } from '@/lib/auth';
 import {
   THEME,
+  TitleMasterEntry,
+  titleForLevel,
+  levelColor,
   calcTeacherTaskXp,
+  TeacherEvalPayload,
 } from '@/types';
 
 import TeacherTaskRater from '@/components/TeacherTaskRater';
@@ -30,8 +35,42 @@ interface TaskCommentMap {
   [taskId: string]: string;
 }
 
-export default function TeacherBulkEvalPage() {
+// 学年表示
+function formatGrade(grade: number): string {
+  if (!grade || grade < 1 || grade > 6) return '';
+  return `${grade}年生`;
+}
+
+// =====================================================================
+// ★ 日付の短縮表示（MM/dd 形式に安全変換）
+// GASから返るフォーマットのバラつきに対応：
+//   - "2026-05-27"          → "05/27"
+//   - "Mon May 27 2026..."  → "05/27"
+//   - "2026-05-27T10:30Z"   → "05/27"
+// =====================================================================
+function formatShortDate(rawDate: string): string {
+  if (!rawDate) return '';
+
+  // 1. "YYYY-MM-DD" 形式が含まれているかチェック（最優先・最高速）
+  const ymdMatch = rawDate.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (ymdMatch) return `${ymdMatch[2]}/${ymdMatch[3]}`;
+
+  // 2. JS標準のDateとしてパース（"Mon May 27 2026..." 等のGAS形式に対応）
+  const d = new Date(rawDate);
+  if (!isNaN(d.getTime())) {
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${mm}/${dd}`;
+  }
+
+  // 3. どちらもダメならフォールバック
+  return rawDate.slice(0, 5);
+}
+
+export default function TeacherEvalPage() {
   const router = useRouter();
+  const params = useParams<{ studentId: string }>();
+  const studentId = params?.studentId ?? null;
 
   // -----------------------------------------------------------------
   // 認証ガード
@@ -49,32 +88,32 @@ export default function TeacherBulkEvalPage() {
   }, [router]);
 
   const user = typeof window !== 'undefined' ? getAuthUser() : null;
+  const teacherId = user?.role === 'teacher' ? user.id : null;
 
   // -----------------------------------------------------------------
   // データ取得
   // -----------------------------------------------------------------
-  const { data, isLoading, error, mutate } = useMyTeacherDashboardSWR();
+  const { data, isLoading, error, mutate } = useStudentDetailSWR(teacherId, studentId);
+  const { mutate: mutateTeacherList }      = useMyTeacherDashboardSWR();
 
   // -----------------------------------------------------------------
   // 入力ステート
   // -----------------------------------------------------------------
-  const [selectedIds, setSelectedIds]       = useState<Set<string>>(new Set());
-  const [taskScores, setTaskScores]         = useState<TaskScoreMap>({});
-  const [taskComments, setTaskComments]     = useState<TaskCommentMap>({});
-  const [submitting, setSubmitting]         = useState(false);
-  const [submitError, setSubmitError]       = useState('');
-  const [success, setSuccess]               = useState<{ xp: number; count: number } | null>(null);
+  const [taskScores, setTaskScores]     = useState<TaskScoreMap>({});
+  const [taskComments, setTaskComments] = useState<TaskCommentMap>({});
+  const [submitting, setSubmitting]     = useState(false);
+  const [submitError,setSubmitError]    = useState('');
+  const [success,    setSuccess]        = useState<{ xp: number } | null>(null);
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [expandedCommentTaskId, setExpandedCommentTaskId] = useState<string | null>(null);
 
   // -----------------------------------------------------------------
-  // XP合計プレビュー（個別10倍の半分＝5倍 → 1人あたりXP）
+  // XP合計プレビュー
   // -----------------------------------------------------------------
   const xpPreview = useMemo(() => {
-    const base = Object.values(taskScores)
+    return Object.values(taskScores)
       .filter(s => s > 0)
       .reduce((sum, s) => sum + calcTeacherTaskXp(s), 0);
-    return Math.floor(base * 0.5); // 10倍 → 5倍
   }, [taskScores]);
 
   const evalCount = useMemo(() => {
@@ -82,31 +121,7 @@ export default function TeacherBulkEvalPage() {
   }, [taskScores]);
 
   // -----------------------------------------------------------------
-  // ハンドラ：生徒選択
-  // -----------------------------------------------------------------
-  const toggleStudent = (studentId: string) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(studentId)) {
-        next.delete(studentId);
-      } else {
-        next.add(studentId);
-      }
-      return next;
-    });
-  };
-
-  const toggleAll = () => {
-    if (!data) return;
-    if (selectedIds.size === data.students.length) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(data.students.map(s => s.user_id)));
-    }
-  };
-
-  // -----------------------------------------------------------------
-  // ハンドラ：課題評価
+  // ハンドラ
   // -----------------------------------------------------------------
   const handleScoreChange = (taskId: string, score: number) => {
     setTaskScores(prev => {
@@ -136,15 +151,8 @@ export default function TeacherBulkEvalPage() {
     });
   };
 
-  // -----------------------------------------------------------------
-  // ハンドラ：送信
-  // -----------------------------------------------------------------
   const handleSubmit = async () => {
-    if (submitting) return;
-    if (selectedIds.size === 0) {
-      setSubmitError('門下生を1人以上選んでください');
-      return;
-    }
+    if (submitting || !studentId) return;
     if (evalCount === 0) {
       setSubmitError('課題を1つ以上評価してください');
       return;
@@ -165,22 +173,24 @@ export default function TeacherBulkEvalPage() {
           };
         });
 
-      await evaluateBulkStudents({
-        student_ids: Array.from(selectedIds),
+      const payload: TeacherEvalPayload = {
+        action:      'evaluateStudent',
+        student_id:  studentId,
         evaluations,
-      });
+      };
 
-      const grantedCount = selectedIds.size;
-      const grantedXp    = xpPreview;
+      const result = await evaluateStudent(payload);
 
       setTaskScores({});
       setTaskComments({});
-      setSelectedIds(new Set());
       setExpandedCommentTaskId(null);
 
-      setSuccess({ xp: grantedXp, count: grantedCount });
+      setSuccess({
+        xp: result.xp_granted ?? xpPreview,
+      });
 
       mutate();
+      mutateTeacherList();
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : '評価の送信に失敗しました');
     } finally {
@@ -198,13 +208,13 @@ export default function TeacherBulkEvalPage() {
   };
 
   // -----------------------------------------------------------------
-  // ローディング / エラー
+  // ローディング
   // -----------------------------------------------------------------
   if (!user || isLoading || !data) {
     return (
       <div style={styles.loadingBox}>
         <div style={styles.loadingFlame}>🥋</div>
-        <p style={styles.loadingText}>道場のきろくを呼び出し中…</p>
+        <p style={styles.loadingText}>門下生のきろくを呼び出し中…</p>
         <style>{`
           @keyframes burning_load_flame {
             0%, 100% { transform: scale(1) rotate(-3deg); }
@@ -230,9 +240,14 @@ export default function TeacherBulkEvalPage() {
     );
   }
 
-  const taskMaster = data.taskMaster ?? [];
+  const { student, status, taskMaster, recentLogs, todayEvaluatedTaskIds = [] } = data;
+  const titleMaster: TitleMasterEntry[] = data.titleMaster ?? [];
   const sortedTasks = [...taskMaster].sort((a, b) => a.displayOrder - b.displayOrder);
-  const allSelected = data.students.length > 0 && selectedIds.size === data.students.length;
+  const evaluableTasks = sortedTasks.filter(t => !todayEvaluatedTaskIds.includes(t.id));
+  const allTasksDone = evaluableTasks.length === 0;
+  const lvColor = levelColor(status.level);
+  const title   = titleForLevel(status.level, titleMaster);
+  const gradeLabel = formatGrade(student.grade);
 
   // -----------------------------------------------------------------
   // メインビュー
@@ -253,98 +268,99 @@ export default function TeacherBulkEvalPage() {
             ← もどる
           </button>
           <div style={styles.headerTitleBox}>
-            <span style={styles.headerLogo}>⚔️</span>
-            <span style={styles.headerTitle}>全体評価</span>
+            <span style={styles.headerLogo}>📝</span>
+            <span style={styles.headerTitle}>門下生を評価</span>
           </div>
           <div style={{ width: 60 }} />
         </header>
 
-        {/* 説明バナー */}
-        <section style={styles.bannerCard}>
-          <div style={styles.bannerIcon}>🔥</div>
-          <div style={styles.bannerBody}>
-            <div style={styles.bannerTitle}>道場全体に修行値を授ける</div>
-            <div style={styles.bannerDetail}>
-              選んだ門下生全員に、評価した課題のXPをまとめて付与します（×5倍ボーナス）。
+        {/* 生徒ステータスカード */}
+        <section style={styles.studentCard}>
+          <div style={styles.studentTop}>
+            <div style={styles.studentIcon}>⚔️</div>
+            <div style={styles.studentInfo}>
+              <div style={styles.studentNameRow}>
+                <span style={styles.studentName}>{student.name}</span>
+                {gradeLabel && (
+                  <span style={styles.studentGrade}>{gradeLabel}</span>
+                )}
+              </div>
+              <div style={{
+                ...styles.studentTitle,
+                color: lvColor,
+                textShadow: `0 0 6px ${lvColor}88`,
+              }}>
+                {title}
+              </div>
             </div>
+            <div style={styles.studentLevel}>
+              <span style={styles.studentLvLabel}>修行度</span>
+              <span style={{
+                ...styles.studentLvNum,
+                color: lvColor,
+                textShadow: `0 0 8px ${lvColor}AA`,
+              }}>
+                Lv.{status.level}
+              </span>
+            </div>
+          </div>
+
+          <div style={styles.studentBottom}>
+            <div style={styles.studentXpBox}>
+              <span style={styles.studentXpLabel}>累計修行値</span>
+              <span style={styles.studentXpNum}>
+                {status.total_xp.toLocaleString()} XP
+              </span>
+            </div>
+            {status.catchphrase && (
+              <div style={styles.studentCatchphrase}>
+                💬「{status.catchphrase}」
+              </div>
+            )}
           </div>
         </section>
 
-        {/* 区切り：生徒選択 */}
-        <Divider label="👥 門下生をえらぶ" />
-
-        {/* 生徒選択カード */}
-        <section style={styles.studentSection}>
-          <div style={styles.studentSelectHeader}>
-            <span style={styles.studentSelectCount}>
-              選択中：<strong style={styles.studentSelectCountNum}>{selectedIds.size}</strong> / {data.students.length} 名
-            </span>
-            <button
-              type="button"
-              onClick={toggleAll}
-              style={{
-                ...styles.toggleAllBtn,
-                ...(allSelected ? styles.toggleAllBtnActive : {}),
-              }}
-            >
-              {allSelected ? '✗ 全員 解除' : '✓ 全員 選択'}
-            </button>
-          </div>
-
-          <div style={styles.studentGrid}>
-            {data.students.map((s) => {
-              const isSelected = selectedIds.has(s.user_id);
-              return (
-                <label
-                  key={s.user_id}
-                  style={{
-                    ...styles.studentTile,
-                    ...(isSelected ? styles.studentTileActive : {}),
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={() => toggleStudent(s.user_id)}
-                    style={styles.hiddenCheckbox}
-                  />
-                  <div style={{
-                    ...styles.tileCheckBadge,
-                    ...(isSelected ? styles.tileCheckBadgeActive : {}),
-                  }}>
-                    {isSelected ? '✓' : ''}
-                  </div>
-                  <div style={styles.tileIcon}>
-                    {isSelected ? '⚔️' : '🥋'}
-                  </div>
-                  <div style={{
-                    ...styles.tileName,
-                    ...(isSelected ? styles.tileNameActive : {}),
-                  }}>
-                    {s.name}
-                  </div>
-                  {s.grade && (
-                    <div style={{
-                      ...styles.tileGrade,
-                      ...(isSelected ? styles.tileGradeActive : {}),
-                    }}>
-                      {s.grade}年
-                    </div>
-                  )}
-                </label>
-              );
-            })}
-          </div>
-
-          {data.students.length === 0 && (
-            <div style={styles.emptyStudents}>
-              門下生が登録されていません
+        {/* 直近の稽古ログ */}
+        {recentLogs && recentLogs.length > 0 && (
+          <section style={styles.recentSection}>
+            <div style={styles.recentHeader}>
+              <span style={styles.recentIcon}>📜</span>
+              <h3 style={styles.recentTitle}>最近のがんばり</h3>
             </div>
-          )}
-        </section>
+            <ul style={styles.recentList}>
+              {recentLogs.slice(0, 5).map((log, i) => (
+                <li key={i} style={styles.recentItem}>
+                  <span style={styles.recentDate}>
+                    {/* ★ 修正：安全な日付パース関数を使用 */}
+                    {formatShortDate(log.date)}
+                  </span>
+                  <span style={styles.recentText}>
+                    {log.task_text}
+                    <span style={styles.recentScore}>
+                      {' '}★{log.score}
+                    </span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
 
-        {/* 区切り：課題評価 */}
+        {/* 区切り */}
         <Divider label="📝 きょうの評価" />
+
+        {/* 全評価済みアラート */}
+        {allTasksDone && (
+          <div style={styles.allDoneBox}>
+            <span style={styles.allDoneIcon}>✅</span>
+            <div>
+              <div style={styles.allDoneTitle}>きょうは評価済み！</div>
+              <div style={styles.allDoneDetail}>
+                すべての課題を評価しました。明日また稽古を見守ろう。
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* 課題評価リスト */}
         <section style={styles.taskSection}>
@@ -352,7 +368,7 @@ export default function TeacherBulkEvalPage() {
             <span style={styles.taskIcon}>⚔️</span>
             <h3 style={styles.taskTitle}>課題の評価</h3>
             <span style={styles.taskCount}>
-              {evalCount}/{sortedTasks.length} 評価中
+              {evalCount}/{evaluableTasks.length} 評価中
             </span>
           </div>
           <div style={styles.taskList}>
@@ -363,7 +379,7 @@ export default function TeacherBulkEvalPage() {
                 taskId={task.id}
                 taskText={task.taskText}
                 score={taskScores[task.id] ?? 0}
-                alreadyEvaluated={false}
+                alreadyEvaluated={todayEvaluatedTaskIds.includes(task.id)}
                 onChange={(score) => handleScoreChange(task.id, score)}
                 criteriaExpanded={expandedTaskId === task.id}
                 onToggleCriteria={() =>
@@ -378,96 +394,82 @@ export default function TeacherBulkEvalPage() {
               />
             ))}
           </div>
-
-          {sortedTasks.length === 0 && (
-            <div style={styles.emptyTasks}>
-              課題マスタが登録されていません
-            </div>
-          )}
         </section>
 
         {/* フッター余白 */}
-        <div style={{ height: 200 }} />
+        <div style={{ height: 160 }} />
       </div>
 
       {/* 固定フッター */}
-      <footer style={styles.fixedFooter}>
-        <div style={styles.footerInner}>
-          <div style={styles.previewBar}>
-            <div style={styles.previewLeft}>
-              <span style={styles.previewIcon}>🔥</span>
-              <span style={styles.previewLabel}>1人あたりの経験値</span>
+      {!allTasksDone && (
+        <footer style={styles.fixedFooter}>
+          <div style={styles.footerInner}>
+            <div style={styles.previewBar}>
+              <div style={styles.previewLeft}>
+                <span style={styles.previewIcon}>🔥</span>
+                <span style={styles.previewLabel}>付与する経験値</span>
+              </div>
+              <div style={styles.previewRight}>
+                <span style={styles.previewXp}>+{xpPreview}</span>
+                <span style={styles.previewUnit}>XP</span>
+                <span style={styles.previewBoost}>×10!</span>
+              </div>
             </div>
-            <div style={styles.previewRight}>
-              <span style={styles.previewXp}>+{xpPreview}</span>
-              <span style={styles.previewUnit}>XP</span>
-              <span style={styles.previewBoost}>×5!</span>
-            </div>
-          </div>
 
-          <div style={styles.previewSubBar}>
-            <span style={styles.previewSubLabel}>対象人数</span>
-            <span style={styles.previewSubValue}>{selectedIds.size} 名</span>
-            <span style={styles.previewSubSep}>×</span>
-            <span style={styles.previewSubLabel}>評価課題</span>
-            <span style={styles.previewSubValue}>{evalCount} 個</span>
-          </div>
-
-          {submitError && (
-            <div role="alert" style={styles.errorBox}>
-              ⚠️ {submitError}
-            </div>
-          )}
-
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={submitting || selectedIds.size === 0 || evalCount === 0}
-            style={{
-              ...styles.submitBtn,
-              ...(submitting || selectedIds.size === 0 || evalCount === 0
-                ? styles.submitBtnDisabled
-                : {}),
-            }}
-            onTouchStart={(e) => {
-              if (!submitting && selectedIds.size > 0 && evalCount > 0) {
-                e.currentTarget.style.transform = 'scale(0.97)';
-              }
-            }}
-            onTouchEnd={(e) => (e.currentTarget.style.transform = 'scale(1)')}
-            onMouseDown={(e) => {
-              if (!submitting && selectedIds.size > 0 && evalCount > 0) {
-                e.currentTarget.style.transform = 'scale(0.97)';
-              }
-            }}
-            onMouseUp={(e) => (e.currentTarget.style.transform = 'scale(1)')}
-            onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
-          >
-            {submitting ? (
-              <>
-                <span style={styles.spinner} aria-hidden="true" />
-                <span>送信中…</span>
-              </>
-            ) : selectedIds.size === 0 ? (
-              <span>👥 門下生をえらぼう</span>
-            ) : evalCount === 0 ? (
-              <span>🤔 課題を評価しよう</span>
-            ) : (
-              <>
-                <span style={styles.submitIcon}>⚡</span>
-                <span>{selectedIds.size}名にまとめて送信！</span>
-                <span style={styles.submitBoostBadge}>×5倍</span>
-              </>
+            {submitError && (
+              <div role="alert" style={styles.errorBox}>
+                ⚠️ {submitError}
+              </div>
             )}
-          </button>
-        </div>
-      </footer>
+
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={submitting || evalCount === 0}
+              style={{
+                ...styles.submitBtn,
+                ...(submitting || evalCount === 0 ? styles.submitBtnDisabled : {}),
+              }}
+              onTouchStart={(e) => {
+                if (!submitting && evalCount > 0) {
+                  e.currentTarget.style.transform = 'scale(0.97)';
+                }
+              }}
+              onTouchEnd={(e) => e.currentTarget.style.transform = 'scale(1)'}
+              onMouseDown={(e) => {
+                if (!submitting && evalCount > 0) {
+                  e.currentTarget.style.transform = 'scale(0.97)';
+                }
+              }}
+              onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
+              onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+            >
+              {submitting ? (
+                <>
+                  <span style={styles.spinner} aria-hidden="true" />
+                  <span>送信中…</span>
+                </>
+              ) : evalCount === 0 ? (
+                <>
+                  <span>🤔 課題を評価しよう</span>
+                </>
+              ) : (
+                <>
+                  <span style={styles.submitIcon}>⚡</span>
+                  <span>評価を送信！</span>
+                  <span style={styles.submitBoostBadge}>×10倍</span>
+                </>
+              )}
+            </button>
+          </div>
+        </footer>
+      )}
 
       {/* 成功モーダル */}
       {success && (
         <SuccessModal
           xp={success.xp}
-          count={success.count}
+          studentName={student.name}
           onContinue={handleSuccessContinue}
           onBack={handleSuccessBack}
         />
@@ -481,11 +483,6 @@ export default function TeacherBulkEvalPage() {
         @keyframes burning_boost_pulse {
           0%, 100% { transform: scale(1); }
           50%      { transform: scale(1.08); }
-        }
-        @keyframes burning_tile_pop {
-          0%   { transform: scale(0.92); }
-          60%  { transform: scale(1.04); }
-          100% { transform: scale(1); }
         }
       `}</style>
     </div>
@@ -509,12 +506,12 @@ function Divider({ label }: { label: string }) {
 // 成功モーダル
 // =====================================================================
 function SuccessModal({
-  xp, count, onContinue, onBack,
+  xp, studentName, onContinue, onBack,
 }: {
-  xp:         number;
-  count:      number;
-  onContinue: () => void;
-  onBack:     () => void;
+  xp:          number;
+  studentName: string;
+  onContinue:  () => void;
+  onBack:      () => void;
 }) {
   return (
     <div style={modalStyles.overlay} role="dialog" aria-modal="true">
@@ -538,19 +535,19 @@ function SuccessModal({
         <div style={modalStyles.aura} aria-hidden="true" />
 
         <div style={modalStyles.checkmark}>✅</div>
-        <h2 style={modalStyles.title}>全体評価完了！</h2>
+        <h2 style={modalStyles.title}>評価完了！</h2>
         <p style={modalStyles.subtitle}>
-          <strong style={{ color: '#FFD700' }}>{count}名</strong> の門下生に修行値を授けた
+          <strong style={{ color: '#FFD700' }}>{studentName}</strong> に修行値を授けた
         </p>
 
         <div style={modalStyles.xpBox}>
-          <div style={modalStyles.xpLabel}>1人あたりの経験値</div>
+          <div style={modalStyles.xpLabel}>付与した経験値</div>
           <div style={modalStyles.xpValueRow}>
             <span style={modalStyles.xpPlus}>+</span>
             <span style={modalStyles.xpValue}>{xp}</span>
             <span style={modalStyles.xpUnit}>XP</span>
           </div>
-          <div style={modalStyles.xpBoost}>道場ボーナス ×5倍！</div>
+          <div style={modalStyles.xpBoost}>師範ボーナス ×10倍！</div>
         </div>
 
         <div style={modalStyles.btnRow}>
@@ -640,44 +637,174 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '20px',
   },
   headerTitle: {
-    fontSize:      '16px',
-    fontWeight:    900,
-    color:         '#FFD700',
+    fontSize:   '16px',
+    fontWeight: 900,
+    color:      '#FFD700',
     letterSpacing: '0.05em',
-    textShadow:    '0 0 8px rgba(255,215,0,0.4)',
+    textShadow: '0 0 8px rgba(255,215,0,0.4)',
   },
 
-  // === 説明バナー ===
-  bannerCard: {
-    display:         'flex',
-    alignItems:      'center',
-    gap:             '12px',
-    padding:         '12px 14px',
+  // === 生徒カード ===
+  studentCard: {
     backgroundColor: THEME.bgCard,
-    borderRadius:    '12px',
+    borderRadius:    '14px',
+    padding:         '14px 16px',
     border:          `2px solid ${THEME.primary}`,
     boxShadow:       '0 4px 16px rgba(0,0,0,0.45), inset 0 0 24px rgba(178,34,34,0.10)',
   },
-  bannerIcon: {
-    fontSize:   '32px',
-    flexShrink: 0,
-    filter:     'drop-shadow(0 0 8px rgba(255,68,68,0.5))',
+  studentTop: {
+    display:    'flex',
+    alignItems: 'center',
+    gap:        '12px',
   },
-  bannerBody: {
-    flex: 1,
+  studentIcon: {
+    fontSize:    '36px',
+    flexShrink:  0,
+    filter:      'drop-shadow(0 0 8px rgba(255,215,0,0.4))',
   },
-  bannerTitle: {
-    fontSize:      '14px',
+  studentInfo: {
+    flex:     1,
+    minWidth: 0,
+  },
+  studentNameRow: {
+    display:    'flex',
+    alignItems: 'baseline',
+    gap:        '8px',
+    flexWrap:   'wrap',
+  },
+  studentName: {
+    fontSize:      '20px',
+    fontWeight:    900,
+    color:         '#FFFFFF',
+    letterSpacing: '0.02em',
+    textShadow:    '0 1px 2px rgba(0,0,0,0.5)',
+  },
+  studentGrade: {
+    fontSize:        '11px',
+    fontWeight:      700,
+    color:           'rgba(255,255,255,0.7)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    padding:         '2px 8px',
+    borderRadius:    '999px',
+    border:          '1px solid rgba(255,255,255,0.2)',
+  },
+  studentTitle: {
+    fontSize:   '13px',
+    fontWeight: 900,
+    marginTop:  '3px',
+  },
+  studentLevel: {
+    display:        'flex',
+    flexDirection:  'column',
+    alignItems:     'center',
+    flexShrink:     0,
+  },
+  studentLvLabel: {
+    fontSize:      '9px',
+    fontWeight:    700,
+    color:         'rgba(255,255,255,0.6)',
+    letterSpacing: '0.15em',
+  },
+  studentLvNum: {
+    fontSize:   '24px',
+    fontWeight: 900,
+    lineHeight: 1.1,
+  },
+  studentBottom: {
+    marginTop:     '12px',
+    paddingTop:    '10px',
+    borderTop:     '1px dashed rgba(255,255,255,0.18)',
+    display:       'flex',
+    flexDirection: 'column',
+    gap:           '6px',
+  },
+  studentXpBox: {
+    display:        'flex',
+    justifyContent: 'space-between',
+    alignItems:     'baseline',
+  },
+  studentXpLabel: {
+    fontSize:      '11px',
+    fontWeight:    700,
+    color:         'rgba(255,255,255,0.65)',
+    letterSpacing: '0.1em',
+  },
+  studentXpNum: {
+    fontSize:   '15px',
+    fontWeight: 900,
+    color:      '#FFD700',
+    textShadow: '0 0 6px rgba(255,215,0,0.5)',
+  },
+  studentCatchphrase: {
+    fontSize:        '12px',
+    color:           '#FFD700',
+    fontStyle:       'italic',
+    backgroundColor: 'rgba(255,215,0,0.10)',
+    padding:         '6px 10px',
+    borderRadius:    '6px',
+    border:          `1px dashed ${THEME.accent}`,
+    textShadow:      '0 0 4px rgba(255,215,0,0.4)',
+  },
+
+  // === 最近の稽古 ===
+  recentSection: {
+    backgroundColor: THEME.bgCard,
+    borderRadius:    '12px',
+    padding:         '12px 14px',
+    border:          '1px solid rgba(255,255,255,0.15)',
+    boxShadow:       '0 2px 12px rgba(0,0,0,0.40)',
+  },
+  recentHeader: {
+    display:      'flex',
+    alignItems:   'center',
+    gap:          '6px',
+    marginBottom: '8px',
+  },
+  recentIcon: {
+    fontSize: '16px',
+  },
+  recentTitle: {
+    margin:        0,
+    fontSize:      '13px',
     fontWeight:    900,
     color:         '#FFD700',
-    marginBottom:  '4px',
     textShadow:    '0 0 4px rgba(255,215,0,0.4)',
     letterSpacing: '0.05em',
   },
-  bannerDetail: {
-    fontSize:   '12px',
-    color:      'rgba(255,255,255,0.85)',
+  recentList: {
+    listStyle:     'none',
+    margin:        0,
+    padding:       0,
+    display:       'flex',
+    flexDirection: 'column',
+    gap:           '6px',
+  },
+  recentItem: {
+    display:     'flex',
+    alignItems:  'baseline',
+    gap:         '8px',
+    fontSize:    '12px',
+    paddingLeft: '8px',
+    borderLeft:  `2px solid ${THEME.primary}`,
+  },
+  recentDate: {
+    fontSize:   '10px',
+    fontWeight: 800,
+    color:      '#FFD700',
+    flexShrink: 0,
+    minWidth:   '38px',
+    textShadow: '0 0 4px rgba(255,215,0,0.4)',
+  },
+  recentText: {
+    color:      '#FFFFFF',
     lineHeight: 1.5,
+    flex:       1,
+  },
+  recentScore: {
+    color:      '#FFD700',
+    fontWeight: 900,
+    fontSize:   '12px',
+    textShadow: '0 0 4px rgba(255,215,0,0.5)',
   },
 
   // === 区切り ===
@@ -706,157 +833,34 @@ const styles: Record<string, React.CSSProperties> = {
     boxShadow:       '0 0 12px rgba(178,34,34,0.30)',
   },
 
-  // === 生徒選択セクション ===
-  studentSection: {
-    backgroundColor: THEME.bgCard,
-    borderRadius:    '14px',
-    padding:         '14px 12px',
-    border:          `2px solid ${THEME.primary}`,
-    boxShadow:       '0 6px 24px rgba(0,0,0,0.55), inset 0 0 30px rgba(178,34,34,0.10)',
+  // === 全評価済み ===
+  allDoneBox: {
+    display:    'flex',
+    alignItems: 'center',
+    gap:        '12px',
+    padding:    '14px',
+    backgroundColor: 'rgba(30,124,58,0.18)',
+    border:     '1px solid #7FFFAA',
+    borderLeft: '4px solid #7FFFAA',
+    borderRadius: '10px',
+    boxShadow:  'inset 0 0 16px rgba(30,124,58,0.20)',
   },
-  studentSelectHeader: {
-    display:        'flex',
-    justifyContent: 'space-between',
-    alignItems:     'center',
-    gap:            '10px',
-    marginBottom:   '12px',
-    paddingBottom:  '8px',
-    borderBottom:   `2px solid ${THEME.primary}`,
-    flexWrap:       'wrap',
+  allDoneIcon: {
+    fontSize:    '28px',
+    flexShrink:  0,
+    filter:      'drop-shadow(0 0 6px rgba(127,255,170,0.5))',
   },
-  studentSelectCount: {
-    fontSize:      '13px',
-    fontWeight:    700,
-    color:         'rgba(255,255,255,0.85)',
-    letterSpacing: '0.05em',
+  allDoneTitle: {
+    fontSize:     '14px',
+    fontWeight:   900,
+    color:        '#7FFFAA',
+    marginBottom: '2px',
+    textShadow:   '0 0 6px rgba(127,255,170,0.5)',
   },
-  studentSelectCountNum: {
-    fontSize:   '18px',
-    fontWeight: 900,
-    color:      '#FFD700',
-    textShadow: '0 0 6px rgba(255,215,0,0.5)',
-    margin:     '0 4px',
-  },
-  toggleAllBtn: {
-    padding:         '8px 16px',
-    fontSize:        '13px',
-    fontWeight:      900,
-    color:           '#FFFFFF',
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    border:          `2px solid ${THEME.primary}`,
-    borderRadius:    '999px',
-    cursor:          'pointer',
-    letterSpacing:   '0.05em',
-    minHeight:       '38px',
-    boxShadow:       '0 2px 8px rgba(178,34,34,0.30)',
-    transition:      'all 0.15s ease',
-  },
-  toggleAllBtnActive: {
-    backgroundColor: '#FFD700',
-    color:           '#2D0B0B',
-    border:          '2px solid #FFD700',
-    boxShadow:       '0 2px 12px rgba(255,215,0,0.50), 0 0 16px rgba(255,215,0,0.35)',
-    textShadow:      'none',
-  },
-
-  // === 生徒タイル（マトリクス） ===
-  studentGrid: {
-    display:             'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))',
-    gap:                 '8px',
-  },
-  studentTile: {
-    position:        'relative',
-    display:         'flex',
-    flexDirection:   'column',
-    alignItems:      'center',
-    justifyContent:  'center',
-    gap:             '4px',
-    padding:         '10px 6px',
-    minHeight:       '92px',
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    border:          '2px solid rgba(255,255,255,0.15)',
-    borderRadius:    '10px',
-    cursor:          'pointer',
-    transition:      'all 0.15s ease',
-    WebkitTapHighlightColor: 'transparent',
-    userSelect:      'none',
-  },
-  studentTileActive: {
-    backgroundColor: 'rgba(255,215,0,0.18)',
-    border:          '2px solid #FFD700',
-    boxShadow:       '0 0 16px rgba(255,215,0,0.40), inset 0 0 12px rgba(255,215,0,0.15)',
-    animation:       'burning_tile_pop 0.25s ease-out',
-  },
-  hiddenCheckbox: {
-    position: 'absolute',
-    width:    '1px',
-    height:   '1px',
-    opacity:  0,
-    pointerEvents: 'none',
-  },
-  tileCheckBadge: {
-    position:        'absolute',
-    top:             '4px',
-    right:           '4px',
-    width:           '20px',
-    height:          '20px',
-    borderRadius:    '50%',
-    backgroundColor: 'rgba(255,255,255,0.10)',
-    border:          '1.5px solid rgba(255,255,255,0.25)',
-    display:         'flex',
-    alignItems:      'center',
-    justifyContent:  'center',
-    fontSize:        '12px',
-    fontWeight:      900,
-    color:           '#2D0B0B',
-    transition:      'all 0.15s ease',
-  },
-  tileCheckBadgeActive: {
-    backgroundColor: '#FFD700',
-    border:          '1.5px solid #FFD700',
-    boxShadow:       '0 0 8px rgba(255,215,0,0.7)',
-  },
-  tileIcon: {
-    fontSize:   '24px',
-    lineHeight: 1,
-    filter:     'drop-shadow(0 0 4px rgba(0,0,0,0.5))',
-  },
-  tileName: {
-    fontSize:      '13px',
-    fontWeight:    900,
-    color:         '#FFFFFF',
-    textAlign:     'center',
-    lineHeight:    1.2,
-    letterSpacing: '0.02em',
-    textShadow:    '0 1px 2px rgba(0,0,0,0.6)',
-    wordBreak:     'break-all',
-  },
-  tileNameActive: {
-    color:      '#FFD700',
-    textShadow: '0 0 6px rgba(255,215,0,0.6), 0 1px 2px rgba(0,0,0,0.6)',
-  },
-  tileGrade: {
-    fontSize:        '10px',
-    fontWeight:      700,
-    color:           'rgba(255,255,255,0.65)',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    padding:         '1px 6px',
-    borderRadius:    '999px',
-    border:          '1px solid rgba(255,255,255,0.15)',
-  },
-  tileGradeActive: {
-    color:           '#2D0B0B',
-    backgroundColor: '#FFD700',
-    border:          '1px solid #FFD700',
-  },
-
-  emptyStudents: {
-    padding:    '24px',
-    textAlign:  'center',
-    fontSize:   '13px',
-    color:      'rgba(255,255,255,0.65)',
-    fontWeight: 700,
+  allDoneDetail: {
+    fontSize:   '12px',
+    color:      'rgba(255,255,255,0.85)',
+    lineHeight: 1.5,
   },
 
   // === 課題セクション ===
@@ -901,13 +905,6 @@ const styles: Record<string, React.CSSProperties> = {
     display:       'flex',
     flexDirection: 'column',
     gap:           '10px',
-  },
-  emptyTasks: {
-    padding:    '24px',
-    textAlign:  'center',
-    fontSize:   '13px',
-    color:      'rgba(255,255,255,0.65)',
-    fontWeight: 700,
   },
 
   // === 固定フッター ===
@@ -980,30 +977,6 @@ const styles: Record<string, React.CSSProperties> = {
     animation:       'burning_boost_pulse 1.4s ease-in-out infinite',
     boxShadow:       '0 0 10px rgba(255,215,0,0.7)',
   },
-  previewSubBar: {
-    display:        'flex',
-    justifyContent: 'center',
-    alignItems:     'center',
-    gap:            '6px',
-    padding:        '4px 10px',
-    fontSize:       '11px',
-    color:          'rgba(255,255,255,0.75)',
-    fontWeight:     700,
-    letterSpacing:  '0.05em',
-  },
-  previewSubLabel: {
-    color: 'rgba(255,255,255,0.6)',
-  },
-  previewSubValue: {
-    color:      '#FFD700',
-    fontWeight: 900,
-    fontSize:   '13px',
-    textShadow: '0 0 4px rgba(255,215,0,0.4)',
-  },
-  previewSubSep: {
-    color:      'rgba(255,255,255,0.4)',
-    fontWeight: 900,
-  },
   errorBox: {
     padding:         '8px 12px',
     backgroundColor: 'rgba(220,20,60,0.18)',
@@ -1018,7 +991,7 @@ const styles: Record<string, React.CSSProperties> = {
     width:           '100%',
     minHeight:       '54px',
     padding:         '14px',
-    fontSize:        '17px',
+    fontSize:        '18px',
     fontWeight:      900,
     color:           '#FFFFFF',
     background:      `linear-gradient(180deg, #D94545 0%, ${THEME.primary} 50%, ${THEME.primaryDark} 100%)`,
@@ -1026,7 +999,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius:    '12px',
     cursor:          'pointer',
     boxShadow:       `0 4px 0 ${THEME.primaryDark}, 0 6px 16px rgba(255,215,0,0.30), 0 0 24px rgba(178,34,34,0.40)`,
-    letterSpacing:   '0.08em',
+    letterSpacing:   '0.1em',
     transition:      'transform 0.08s ease',
     display:         'flex',
     alignItems:      'center',
