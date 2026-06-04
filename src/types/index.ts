@@ -261,6 +261,7 @@ export interface TeacherDashboardData {
   teacher:  User;
   students: StudentSummary[];
   titleMaster: TitleMasterEntry[]; // ★追加
+  taskMaster: TaskMasterEntry[];
 }
 
 /** 先生が個別生徒画面に入った際のデータ */
