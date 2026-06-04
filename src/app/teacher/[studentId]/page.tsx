@@ -213,7 +213,7 @@ export default function TeacherEvalPage() {
   if (!user || isLoading || !data) {
     return (
       <div style={styles.loadingBox}>
-        <div style={styles.loadingFlame}>🥋</div>
+        <div style={styles.loadingFlame}>⚔</div>
         <p style={styles.loadingText}>門下生のきろくを呼び出し中…</p>
         <style>{`
           @keyframes burning_load_flame {

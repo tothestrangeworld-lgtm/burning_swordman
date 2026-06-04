@@ -73,7 +73,7 @@ export default function StudentDashboardPage() {
   // ログアウト
   // ---------------------------------------------------------------
   const handleLogout = () => {
-    if (confirm('道場を出るかい？')) {
+    if (confirm('道場を出ますか？')) {
       clearAuthUser();
       router.replace('/login');
     }

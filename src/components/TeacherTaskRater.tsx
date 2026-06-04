@@ -2,13 +2,17 @@
 // =====================================================================
 // 燃えよ剣士 - 先生用★評価コンポーネント（熱血ダークテーマ版）
 // 二重評価防止（todayEvaluatedTaskIds）に対応した先生専用版
+// multiplier（倍率）を動的に受け取り、XP表示・バッジを切り替え
 // =====================================================================
 
 'use client';
 
-import { THEME, calcTeacherTaskXp } from '@/types';
+import { THEME } from '@/types';
 import { TASK_CRITERIA } from '@/lib/taskCriteria';
 import TaskCriteriaPanel from '@/components/TaskCriteriaPanel';
+
+/** 自己評価のベースXP（1スコアあたり） */
+const BASE_XP_PER_SCORE = 5;
 
 interface Props {
   taskId:   string;
@@ -26,6 +30,8 @@ interface Props {
   onCommentChange?: (value: string) => void;
   commentExpanded?: boolean;
   onToggleComment?: () => void;
+  /** XP倍率（個別評価=10倍, 全体評価=5倍）デフォルト10 */
+  multiplier?: number;
 }
 
 const SCORE_LABELS: Record<number, { label: string; emoji: string; color: string }> = {
@@ -40,8 +46,9 @@ export default function TeacherTaskRater({
   taskId, taskText, score, onChange, alreadyEvaluated, index,
   criteriaExpanded = false, onToggleCriteria,
   comment = '', onCommentChange, commentExpanded = false, onToggleComment,
+  multiplier = 10,
 }: Props) {
-  const xp = score > 0 ? calcTeacherTaskXp(score) : 0;
+  const xp = score > 0 ? score * BASE_XP_PER_SCORE * multiplier : 0;
   const meta = score > 0 ? SCORE_LABELS[score] : null;
   const disabled = alreadyEvaluated;
   const hasCriteria = Boolean(TASK_CRITERIA[taskId]);
@@ -139,7 +146,7 @@ export default function TeacherTaskRater({
                 </span>
                 <span style={styles.xpPreview}>
                   +<strong>{xp}</strong> XP
-                  <span style={styles.xpBoost}>×10!</span>
+                  <span style={styles.xpBoost}>×{multiplier}!</span>
                 </span>
               </>
             ) : (

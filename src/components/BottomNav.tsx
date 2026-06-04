@@ -129,7 +129,7 @@ export default function BottomNav() {
   // ===================================================================
   const handleClick = (item: NavItem) => {
     if (item.action === 'logout') {
-      const ok = window.confirm('道場を出るかい？');
+      const ok = window.confirm('道場を出ますか？');
       if (ok) {
         logoutAndRedirect();
       }

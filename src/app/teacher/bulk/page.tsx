@@ -15,12 +15,14 @@ import {
   evaluateBulkStudents,
 } from '@/lib/api';
 import { getAuthUser } from '@/lib/auth';
-import {
-  THEME,
-  calcTeacherTaskXp,
-} from '@/types';
+import { THEME } from '@/types';
 
 import TeacherTaskRater from '@/components/TeacherTaskRater';
+
+/** 自己評価のベースXP（1スコアあたり） */
+const BASE_XP_PER_SCORE = 5;
+/** 全体評価の倍率 */
+const BULK_MULTIPLIER = 5;
 
 interface TaskScoreMap {
   [taskId: string]: number;
@@ -68,13 +70,12 @@ export default function TeacherBulkEvalPage() {
   const [expandedCommentTaskId, setExpandedCommentTaskId] = useState<string | null>(null);
 
   // -----------------------------------------------------------------
-  // XP合計プレビュー（個別10倍の半分＝5倍 → 1人あたりXP）
+  // XP合計プレビュー（スコア × ベース5 × 倍率5 → 1人あたりXP）
   // -----------------------------------------------------------------
   const xpPreview = useMemo(() => {
-    const base = Object.values(taskScores)
+    return Object.values(taskScores)
       .filter(s => s > 0)
-      .reduce((sum, s) => sum + calcTeacherTaskXp(s), 0);
-    return Math.floor(base * 0.5); // 10倍 → 5倍
+      .reduce((sum, s) => sum + s * BASE_XP_PER_SCORE * BULK_MULTIPLIER, 0);
   }, [taskScores]);
 
   const evalCount = useMemo(() => {
@@ -203,7 +204,7 @@ export default function TeacherBulkEvalPage() {
   if (!user || isLoading || !data) {
     return (
       <div style={styles.loadingBox}>
-        <div style={styles.loadingFlame}>🥋</div>
+        <div style={styles.loadingFlame}>⚔️</div>
         <p style={styles.loadingText}>道場のきろくを呼び出し中…</p>
         <style>{`
           @keyframes burning_load_flame {
@@ -364,6 +365,7 @@ export default function TeacherBulkEvalPage() {
                 taskText={task.taskText}
                 score={taskScores[task.id] ?? 0}
                 alreadyEvaluated={false}
+                multiplier={BULK_MULTIPLIER}
                 onChange={(score) => handleScoreChange(task.id, score)}
                 criteriaExpanded={expandedTaskId === task.id}
                 onToggleCriteria={() =>
@@ -401,7 +403,7 @@ export default function TeacherBulkEvalPage() {
             <div style={styles.previewRight}>
               <span style={styles.previewXp}>+{xpPreview}</span>
               <span style={styles.previewUnit}>XP</span>
-              <span style={styles.previewBoost}>×5!</span>
+              <span style={styles.previewBoost}>×{BULK_MULTIPLIER}!</span>
             </div>
           </div>
 
@@ -456,7 +458,7 @@ export default function TeacherBulkEvalPage() {
               <>
                 <span style={styles.submitIcon}>⚡</span>
                 <span>{selectedIds.size}名にまとめて送信！</span>
-                <span style={styles.submitBoostBadge}>×5倍</span>
+                <span style={styles.submitBoostBadge}>×{BULK_MULTIPLIER}倍</span>
               </>
             )}
           </button>
