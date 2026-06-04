@@ -124,7 +124,7 @@ export default function LoginPage() {
             <RoleTabBtn
               active={roleTab === 'teacher'}
               onClick={() => setRoleTab('teacher')}
-              icon="🥋"
+              icon="👤"
               label="師範"
               sub="（先生）"
             />
