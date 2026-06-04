@@ -315,7 +315,7 @@ export default function TeacherBulkEvalPage() {
                     {isSelected ? '✓' : ''}
                   </div>
                   <div style={styles.tileIcon}>
-                    {isSelected ? '⚔️' : '🥋'}
+                    {isSelected ? '⚔️' : '👤'}
                   </div>
                   <div style={{
                     ...styles.tileName,
