@@ -147,7 +147,7 @@ export default function TeacherHomePage() {
         {/* ヘッダーバー */}
         <header style={styles.headerBar}>
           <div style={styles.headerLeft}>
-            <span style={styles.headerLogo}>🥋</span>
+            <span style={styles.headerLogo}>👤</span>
             <span style={styles.headerTitle}>師範ダッシュボード</span>
           </div>
         </header>
@@ -317,7 +317,7 @@ function TeacherSkeleton() {
       <div style={styles.bgPattern} aria-hidden="true" />
       <div style={styles.container}>
         <div style={styles.skeletonLogo}>
-          <div style={styles.skeletonFlame}>🥋</div>
+          <div style={styles.skeletonFlame}>👤</div>
           <h2 style={styles.skeletonTitle}>道場の準備中…</h2>
           <div style={styles.skeletonSpinner} />
         </div>
