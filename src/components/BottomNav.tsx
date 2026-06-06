@@ -105,7 +105,7 @@ interface NavItem {
 const STUDENT_ITEMS: NavItem[] = [
   { key: 'home',     label: 'ホーム', href: '/',                 icon: HomeIcon,   emoji: '🏠' },
   { key: 'record',   label: '記録',   href: '/record',           icon: RecordIcon, emoji: '📝' },
-  { key: 'minigame', label: '見切り', href: '/student/minigame', icon: SwordsIcon, emoji: '⚔️' }, // ★ Phase 6 追加
+  { key: 'minigame', label: '見切り', href: '/minigame', icon: SwordsIcon, emoji: '⚔️' }, // ★ Phase 6 追加
   { key: 'logout',   label: '退場',   action: 'logout',          icon: LogOutIcon, emoji: '🚪' },
 ];
 
