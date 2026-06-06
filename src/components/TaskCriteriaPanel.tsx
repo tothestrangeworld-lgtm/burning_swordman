@@ -29,7 +29,6 @@ export default function TaskCriteriaPanel({ taskId, expanded }: Props) {
       aria-hidden={!expanded}
     >
       <div style={panelStyles.inner}>
-        <div style={panelStyles.title}>{criteria.title}</div>
         <p style={panelStyles.subtitle}>合格基準（この3つを見て★をつけよう）</p>
         <ul style={panelStyles.list}>
           {criteria.checks.map((check, i) => (
