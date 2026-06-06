@@ -1,6 +1,6 @@
 // src/app/page.tsx
 // =====================================================================
-// 燃えよ剣士 - 生徒ダッシュボード（ホーム画面）
+// 燃えろ剣士 - 生徒ダッシュボード（ホーム画面）
 // ログインした生徒が朝イチで開いて「うおおぉ俺つえぇ！」となる画面
 // =====================================================================
 
@@ -99,7 +99,7 @@ export default function StudentDashboardPage() {
         <header style={styles.headerBar}>
           <div style={styles.headerLeft}>
             <span style={styles.headerLogo}>🔥</span>
-            <span style={styles.headerTitle}>燃えよ剣士</span>
+            <span style={styles.headerTitle}>燃えろ剣士</span>
           </div>
           <button
             onClick={handleLogout}

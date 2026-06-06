@@ -1,6 +1,6 @@
 // src/app/login/page.tsx
 // =====================================================================
-// 燃えよ剣士 - ログイン画面（熱血ダークテーマ版・タブ白飛び完全修正）
+// 燃えろ剣士 - ログイン画面（熱血ダークテーマ版・タブ白飛び完全修正）
 // 小学生でも迷わない「タブで役割選択 → 名前選択 → パスコード」の3ステップ
 // =====================================================================
 
@@ -106,7 +106,7 @@ export default function LoginPage() {
         {/* ヒーローロゴ */}
         <header style={styles.hero}>
           <div style={styles.heroFlame}>🔥</div>
-          <h1 style={styles.heroTitle}>燃えよ剣士</h1>
+          <h1 style={styles.heroTitle}>燃えろ剣士</h1>
           <p style={styles.heroSub}>道場へようこそ</p>
         </header>
 
@@ -295,7 +295,7 @@ export default function LoginPage() {
         {/* フッター */}
         <footer style={styles.footer}>
           <p style={styles.footerText}>
-            🔥 燃えよ剣士 — 小学生剣士のための稽古記録
+            🔥 燃えろ剣士 — 小学生剣士のための稽古記録
           </p>
         </footer>
       </div>

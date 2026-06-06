@@ -1,5 +1,5 @@
 // =====================================================================
-// 燃えよ剣士 - GAS Backend (Code.gs)
+// 燃えろ剣士 - GAS Backend (Code.gs)
 // Phase 1.5: 初期化 + 取得系API + 更新系API + ルーティング
 // Phase 4.1: getUserList (公開ログイン用) を追加
 // Phase 5.0: evaluateBulkStudents（全体評価/一括評価）API追加
