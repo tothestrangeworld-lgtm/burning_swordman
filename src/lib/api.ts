@@ -2,7 +2,7 @@
 // =====================================================================
 // 燃えろ剣士 - GAS APIクライアント & SWRフック
 // Phase 5: 全体評価（一括評価）API追加
-// Phase 6: ミニゲーム『刹那ノ見切』API追加
+// Phase 6: ミニゲーム『刹那ノ見切』API追加（1日5回・ランキング対応）
 // =====================================================================
 
 import useSWR, { SWRConfiguration, SWRResponse } from 'swr';
@@ -390,7 +390,7 @@ export const SWR_KEYS = {
 } as const;
 
 // =====================================================================
-// ★★★ Phase 6 追加: ミニゲーム『刹那ノ見切』API ★★★
+// ★★★ Phase 6: ミニゲーム『刹那ノ見切』API（重複排除・統合版） ★★★
 // =====================================================================
 
 /**
@@ -402,9 +402,9 @@ export type MinigameRank = 'S' | 'A' | 'B' | 'C' | 'F';
  * 本日のプレイ状況レスポンス（getMinigameStatus）
  */
 export interface MinigameStatus {
-  /** 本日プレイ済み回数（0〜3） */
+  /** 本日プレイ済み回数（0〜5） */
   todayPlayed: number;
-  /** 1日の上限（3） */
+  /** 1日の上限（5） */
   dailyLimit: number;
   /** 残りプレイ可能数 */
   remaining: number;
@@ -437,6 +437,18 @@ export interface MinigameSaveResult {
   averageTime: number;
   /** 総合ランク */
   rank:        string;
+}
+
+/**
+ * ランキング1件分（fetchMinigameRanking）
+ */
+export interface MinigameRankingEntry {
+  /** 生徒ID */
+  userId:     string;
+  /** 生徒名 */
+  name:       string;
+  /** その生徒のベストタイム（ms・小さいほど速い） */
+  bestTimeMs: number;
 }
 
 /**
@@ -508,6 +520,14 @@ export async function saveMinigameResult(
   });
 }
 
+/**
+ * 公開API: 道場内ベストタイム上位10名のランキングを取得（GET）
+ * 誰でも閲覧可能（生徒・先生問わず）。
+ */
+export async function fetchMinigameRanking(): Promise<MinigameRankingEntry[]> {
+  return gasGet<MinigameRankingEntry[]>('getMinigameRanking');
+}
+
 // =====================================================================
 // SWRフック: ミニゲームのプレイ状況（任意・5秒キャッシュ）
 // =====================================================================
@@ -523,6 +543,20 @@ export function useMinigameStatusSWR() {
     {
       ...SWR_BASE_CONFIG,
       dedupingInterval: SWR_DEDUP.DASHBOARD,
+    },
+  );
+}
+
+// =====================================================================
+// SWRフック: ミニゲームランキング（任意・10秒キャッシュ）
+// =====================================================================
+export function useMinigameRankingSWR() {
+  return useSWR<MinigameRankingEntry[], Error>(
+    'gas:getMinigameRanking',
+    fetchMinigameRanking,
+    {
+      ...SWR_BASE_CONFIG,
+      dedupingInterval: SWR_DEDUP.TEACHER_LIST,
     },
   );
 }

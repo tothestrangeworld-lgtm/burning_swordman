@@ -3,6 +3,7 @@
 // Phase 1.5: 初期化 + 取得系API + 更新系API + ルーティング
 // Phase 4.1: getUserList (公開ログイン用) を追加
 // Phase 5.0: evaluateBulkStudents（全体評価/一括評価）API追加
+// Phase 6.0: ミニゲーム『刹那ノ見切』API追加（1日5回・ランキング）
 // =====================================================================
 
 const SS_ID = PropertiesService.getScriptProperties().getProperty('SHEET_ID');
@@ -21,6 +22,17 @@ const TASK_LOG_LIMIT_DAYS     = 90;
 const TECH_LOG_LIMIT_DAYS     = 90;
 const XP_HISTORY_LIMIT        = 90;
 const STUDENT_DETAIL_LOG_DAYS = 30;
+
+// ★ Phase 6: ミニゲーム定数
+const MINIGAME_DAILY_LIMIT    = 5;   // 1日5回
+const MINIGAME_RANKING_LIMIT  = 10;  // ランキング表示件数
+const MINIGAME_XP_TABLE = {          // ランク別獲得XP
+  S: 50,
+  A: 30,
+  B: 20,
+  C: 10,
+  F: 0,
+};
 
 // =====================================================================
 // 全シートのスキーマ定義（initMasterData で使用）
@@ -142,6 +154,7 @@ function _seedMaster_(sheetName, rows) {
 
 // =====================================================================
 // エントリーポイント：doGet（参照系）
+// ★ Phase 6: getMinigameStatus / getMinigameRanking を追加
 // =====================================================================
 function doGet(e) {
   let params = {};
@@ -163,6 +176,13 @@ function doGet(e) {
       case 'getStudentDetail':
         result = getStudentDetail(params.teacher_id, params.student_id);
         break;
+      // ★ Phase 6.0 追加：ミニゲーム
+      case 'getMinigameStatus':
+        result = getMinigameStatus(params.user_id);
+        break;
+      case 'getMinigameRanking':
+        result = getMinigameRanking();
+        break;
       default:
         throw new Error('未知のアクション: ' + action);
     }
@@ -178,6 +198,7 @@ function doGet(e) {
 
 // =====================================================================
 // エントリーポイント：doPost（更新系）
+// ★ Phase 6: saveMinigameResult を追加
 // =====================================================================
 function doPost(e) {
   let payload = {};
@@ -199,6 +220,10 @@ function doPost(e) {
       // ★ Phase 5.0 追加：全体評価（一括評価）
       case 'evaluateBulkStudents':
         result = evaluateBulkStudents(payload);
+        break;
+      // ★ Phase 6.0 追加：ミニゲーム結果保存
+      case 'saveMinigameResult':
+        result = saveMinigameResult(payload);
         break;
       default:
         throw new Error('未知のアクション: ' + action);
@@ -423,20 +448,7 @@ function evaluateStudent(payload) {
 }
 
 // =====================================================================
-// ★★★ Phase 5.0 追加：evaluateBulkStudents 全体評価（一括評価/5倍XP） ★★★
-// =====================================================================
-//
-// 仕様：
-//  - 複数生徒を一度に評価（チェックボックスで選択された生徒）
-//  - XP倍率は5倍（個別評価10倍の半分）
-//  - 二重評価防止：今日この先生が同じ生徒の同じ課題を評価済みならスキップ
-//  - パフォーマンス: 全シート読み込みを1回にまとめ、書き込みは setValues で一括
-//  - エラーハンドリング: 個別生徒の失敗は他生徒の処理を止めず、failures に記録
-//
-// パフォーマンス指針：
-//  N人 × M課題 = N×M件のレコードを task_logs に追加するが、
-//  appendRow を N×M回呼ぶと激遅なので、setValues で一括書き込みする。
-//  user_status の更新もまとめて行う。
+// ★★★ Phase 5.0：evaluateBulkStudents 全体評価（一括評価/5倍XP） ★★★
 // =====================================================================
 function evaluateBulkStudents(payload) {
   // ====== 1. パラメータ検証 ======
@@ -466,18 +478,16 @@ function evaluateBulkStudents(payload) {
   const now   = _nowStr_();
   const today = _todayStr_();
 
-  // 全ユーザー情報を1回で取得（生徒名解決＆権限チェック用）
   const allUsersMap = _getAllUsersMap_();
 
-  // user_status シートの全データを1回で読む（個別アクセス回避）
   const userStatusSheet = _sheet_('user_status');
   const userStatusData  = userStatusSheet.getDataRange().getValues();
-  const userStatusRowMap = {}; // userId -> { rowIndex, total_xp, level, ... }
+  const userStatusRowMap = {};
   for (let i = 1; i < userStatusData.length; i++) {
     const uid = userStatusData[i][0];
     if (!uid) continue;
     userStatusRowMap[uid] = {
-      rowIndex:           i + 1, // シート上の行番号（1-indexed）
+      rowIndex:           i + 1,
       total_xp:           Number(userStatusData[i][1]) || 0,
       level:              Number(userStatusData[i][2]) || 1,
       last_practice_date: userStatusData[i][3] || '',
@@ -487,11 +497,9 @@ function evaluateBulkStudents(payload) {
     };
   }
 
-  // task_logs の全データを1回で読む（二重評価チェック用）
   const taskLogSheet = _sheet_('task_logs');
   const taskLogData  = taskLogSheet.getDataRange().getValues();
 
-  // 今日この先生が評価済みのキー：Set<"studentId|taskId">
   const todayEvaluatedKeySet = new Set();
   for (let i = 1; i < taskLogData.length; i++) {
     const logUserId      = taskLogData[i][0];
@@ -504,20 +512,18 @@ function evaluateBulkStudents(payload) {
   }
 
   // ====== 3. 各生徒について評価処理（メモリ上で計算） ======
-  const newTaskLogRows = [];   // task_logs に追記する行（一括書き込み用）
-  const newXpHistoryRows = []; // xp_history に追記する行
-  const userStatusUpdates = []; // user_status の更新リスト
-  const results = [];           // 各生徒の処理結果サマリ
-  const failures = [];          // 失敗した生徒
+  const newTaskLogRows = [];
+  const newXpHistoryRows = [];
+  const userStatusUpdates = [];
+  const results = [];
+  const failures = [];
   let totalXpGrantedAll = 0;
   let processedCount = 0;
 
-  // 重複student_idを除去
   const uniqueStudentIds = Array.from(new Set(studentIds));
 
   uniqueStudentIds.forEach(studentId => {
     try {
-      // 生徒の存在＆ロール確認
       const student = allUsersMap[studentId];
       if (!student) {
         failures.push({ student_id: studentId, reason: '生徒が見つかりません' });
@@ -528,7 +534,6 @@ function evaluateBulkStudents(payload) {
         return;
       }
 
-      // この生徒に対する評価をループ
       let xpForThisStudent = 0;
       let evalCountForThisStudent = 0;
       let skippedCountForThisStudent = 0;
@@ -537,30 +542,25 @@ function evaluateBulkStudents(payload) {
         const dedupeKey = studentId + '|' + ev.task_id;
         if (todayEvaluatedKeySet.has(dedupeKey)) {
           skippedCountForThisStudent++;
-          return; // 二重評価スキップ
+          return;
         }
 
-        // ★ XP計算（5倍）
         const xp = ev.score * SELF_TASK_XP_PER_SCORE * BULK_EVAL_MULTIPLIER;
         xpForThisStudent += xp;
         evalCountForThisStudent++;
 
         const comment = (ev.comment || '').toString().slice(0, 30);
 
-        // task_logs に追加する行を蓄積
         newTaskLogRows.push([
           studentId, now, ev.task_id, ev.score, xp, teacherId, comment,
         ]);
 
-        // 重複防止のため、処理済みキーとして登録
         todayEvaluatedKeySet.add(dedupeKey);
       });
 
-      // この生徒のステータス更新計算（メモリ上）
       let currentStatus = userStatusRowMap[studentId];
       let needNewRow = false;
       if (!currentStatus) {
-        // user_status に未登録 → 新規行として追加予定
         needNewRow = true;
         currentStatus = {
           rowIndex:           -1,
@@ -588,7 +588,6 @@ function evaluateBulkStudents(payload) {
         prevCatch:    currentStatus.catchphrase,
       });
 
-      // xp_history に追加する行を蓄積
       if (xpForThisStudent > 0) {
         newXpHistoryRows.push([
           studentId,
@@ -601,7 +600,6 @@ function evaluateBulkStudents(payload) {
         ]);
       }
 
-      // メモリ上の userStatusRowMap も更新（後続処理に影響しないように）
       userStatusRowMap[studentId] = Object.assign({}, currentStatus, {
         total_xp: newTotalXp,
         level:    newLevel,
@@ -620,7 +618,6 @@ function evaluateBulkStudents(payload) {
       processedCount++;
 
     } catch (e) {
-      // 個別生徒のエラーは記録して続行
       failures.push({
         student_id: studentId,
         reason:     e.message || '不明なエラー',
@@ -628,9 +625,7 @@ function evaluateBulkStudents(payload) {
     }
   });
 
-  // ====== 4. 一括書き込み（setValues でまとめて書き込み） ======
-
-  // 4-1. task_logs に一括追記
+  // ====== 4. 一括書き込み ======
   if (newTaskLogRows.length > 0) {
     const startRow = taskLogSheet.getLastRow() + 1;
     taskLogSheet
@@ -638,11 +633,8 @@ function evaluateBulkStudents(payload) {
       .setValues(newTaskLogRows);
   }
 
-  // 4-2. user_status を更新（既存行はsetValues、新規行はappend）
-  // 既存行を rowIndex ごとに setValue（バッチ処理だが、行が散らばっているので個別更新）
   userStatusUpdates.forEach(upd => {
     if (upd.needNewRow) {
-      // 新規ユーザー：行を追加
       userStatusSheet.appendRow([
         upd.studentId,
         upd.newTotalXp,
@@ -653,13 +645,11 @@ function evaluateBulkStudents(payload) {
         upd.prevCatch,
       ]);
     } else {
-      // 既存ユーザー：XPとレベルだけ更新
       userStatusSheet.getRange(upd.rowIndex, 2).setValue(upd.newTotalXp);
       userStatusSheet.getRange(upd.rowIndex, 3).setValue(upd.newLevel);
     }
   });
 
-  // 4-3. xp_history に一括追記
   if (newXpHistoryRows.length > 0) {
     const xpHistorySheet = _sheet_('xp_history');
     const startRow = xpHistorySheet.getLastRow() + 1;
@@ -695,10 +685,8 @@ function getDashboard(userId) {
   if (!user) throw new Error('ユーザーが見つかりません');
   if (user.role !== 'student') throw new Error('生徒のみが利用できます');
 
-  // 減衰判定（ログイン時にも適用）
   const decayInfo = _applyDecayIfNeeded_(userId);
 
-  // ステータス取得
   const statusRaw = _getOrCreateUserStatus_(userId);
   const status = {
     total_xp:           statusRaw.total_xp,
@@ -708,30 +696,23 @@ function getDashboard(userId) {
     catchphrase:        statusRaw.catchphrase || '',
   };
 
-  // マスタ取得
   const taskMaster      = _getTaskMaster_();
   const techniqueMaster = _getTechniqueMaster_();
   const titleMaster     = _getTitleMaster_();
   const taskMap         = _toMap_(taskMaster, 'id');
 
-  // ユーザー名解決用（先生名の表示）
   const userMap = _getAllUsersMap_();
 
-  // ログ取得（直近90日）
   const taskLogs = _getTaskLogs_(userId, TASK_LOG_LIMIT_DAYS, taskMap, userMap);
   const techniqueLogs = _getTechniqueLogs_(userId, TECH_LOG_LIMIT_DAYS);
   const xpHistory = _getXpHistory_(userId, XP_HISTORY_LIMIT);
 
-  // 自分が受けた先生評価のみ抽出
   const teacherEvalLogs = taskLogs.filter(l => l.evaluator_id !== 'self');
 
-  // 技マスタリー
   const techniques = _getUserTechniques_(userId, techniqueMaster);
 
-  // 次レベル情報
   const nextLevelXp = _calcNextLevelInfo_(status.total_xp, status.level, titleMaster);
 
-  // 実績
   const achievements = _getUserAchievementsWithMaster_(userId);
 
   return {
@@ -762,21 +743,13 @@ function getTeacherDashboard(teacherId) {
     throw new Error('先生権限がありません');
   }
 
-  // 全ユーザーから生徒だけ抽出
   const allUsers = _getAllUsers_();
   const students = allUsers.filter(u => u.role === 'student');
 
-  // 全 user_status を一括取得
   const statusMap = _getAllUserStatusMap_();
-
-  // 全 user_techniques を一括取得（生徒の累計ポイント集計用）
   const techPointsMap = _getAllTechniquePointsMap_();
-
-  // 称号マスタ（フロント側でフォールバック可能だが、ペイロードに含めて整合性確保）
   const titleMaster = _getTitleMaster_();
-
-  // 課題マスタ
-  const taskMaster = _getTaskMaster_();  // ★追加：課題一覧を取得
+  const taskMaster = _getTaskMaster_();
 
   const today = new Date(_todayStr_());
 
@@ -808,7 +781,6 @@ function getTeacherDashboard(teacherId) {
     };
   });
 
-  // 学年昇順 → 名前昇順
   summaries.sort((a, b) => {
     if (a.grade !== b.grade) return a.grade - b.grade;
     return a.name.localeCompare(b.name, 'ja');
@@ -818,7 +790,7 @@ function getTeacherDashboard(teacherId) {
     teacher:     teacher,
     students:    summaries,
     titleMaster: titleMaster,
-    taskMaster:  taskMaster,  // ★追加：フロントエンドに渡す
+    taskMaster:  taskMaster,
   };
 }
 
@@ -853,13 +825,10 @@ function getStudentDetail(teacherId, studentId) {
   const taskMap         = _toMap_(taskMaster, 'id');
   const userMap         = _getAllUsersMap_();
 
-  // 直近30日のログ
   const recentLogs = _getTaskLogs_(studentId, STUDENT_DETAIL_LOG_DAYS, taskMap, userMap);
 
-  // 技マスタリー
   const techniques = _getUserTechniques_(studentId, techniqueMaster);
 
-  // 今日この先生が既に評価したタスクID（連打防止UI用）
   const today = _todayStr_();
   const todayEvaluatedKeys = _getTeacherTodayEvaluatedKeys_(teacherId, studentId, today);
   const todayEvaluatedTaskIds = Array.from(todayEvaluatedKeys);
@@ -962,7 +931,6 @@ function _getTaskLogs_(userId, limitDays, taskMap, userMap) {
       comment:        data[i][6] || '',
     });
   }
-  // 新しい順
   result.sort((a, b) => b.date.localeCompare(a.date));
   return result;
 }
@@ -1003,7 +971,6 @@ function _getXpHistory_(userId, limit) {
       level:          Number(data[i][6]) || 1,
     });
   }
-  // 新しい順 → limit 件
   result.sort((a, b) => b.date.localeCompare(a.date));
   return result.slice(0, limit);
 }
@@ -1020,7 +987,6 @@ function _getUserTechniques_(userId, techniqueMaster) {
       last_quality:  Number(data[i][4]) || null,
     };
   }
-  // 全技について（記録がなくても0で返す）
   return techniqueMaster.map(tm => {
     const r = userTechMap[tm.id] || { points: 0, last_quantity: null, last_quality: null };
     return {
@@ -1373,37 +1339,37 @@ function _logError_(action, message, detail) {
 //
 // 仕様:
 //  - 門下生（生徒）専用のボーナスXP獲得ミニゲーム
-//  - 1日3回まで（Asia/Tokyo 日付境界でリセット）
+//  - 1日5回まで（Asia/Tokyo 日付境界でリセット）
 //  - ランク別獲得XP: S=50 / A=30 / B=20 / C=10 / F=0
 //  - 既存の _addXpToUser_ を再利用して総XPへ加算＆レベルアップ判定
 //  - minigame_scores シート（SHEET_SCHEMAS で定義済み）に履歴を記録
 //    列: id, user_id, created_at, average_time, rank, earned_xp
+//  - ランキング: 生徒ごとのベストタイム（最小 average_time）上位10名
 // =====================================================================
 
-// ミニゲーム定数
-const MINIGAME_DAILY_LIMIT = 3;
-
-// ランク別獲得XP（S=50 / A=30 / B=20 / C=10 / F=0）
-const MINIGAME_XP_TABLE = {
-  S: 50,
-  A: 30,
-  B: 20,
-  C: 10,
-  F: 0,
-};
+/**
+ * 日付値を Asia/Tokyo の YYYY-MM-DD 文字列へ変換
+ */
+function _mgDateStr_(val) {
+  if (!val) return '';
+  try {
+    if (val instanceof Date) {
+      return Utilities.formatDate(val, 'Asia/Tokyo', 'yyyy-MM-dd');
+    }
+    const s = String(val);
+    if (s.match(/^\d{4}-\d{2}-\d{2}/)) return s.slice(0, 10);
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) {
+      return Utilities.formatDate(d, 'Asia/Tokyo', 'yyyy-MM-dd');
+    }
+  } catch (e) {
+    // フォールスルー
+  }
+  return '';
+}
 
 // =====================================================================
 // 6-1. getMinigameStatus : 本日のプレイ状況＆自己ベストを取得
-//
-//   引数: userId（生徒ID）
-//   戻り値:
-//     {
-//       todayPlayed: number,        // 本日プレイ回数（0〜3）
-//       dailyLimit:  number,        // 3
-//       remaining:   number,        // 残りプレイ可能数
-//       locked:      boolean,       // 上限到達ならtrue
-//       bestTimeMs:  number | null, // 自己ベスト平均反応速度(ms)
-//     }
 // =====================================================================
 function getMinigameStatus(userId) {
   if (!userId) throw new Error('user_idが指定されていません');
@@ -1425,13 +1391,10 @@ function getMinigameStatus(userId) {
   for (let i = 1; i < data.length; i++) {
     if (data[i][1] !== userId) continue;
 
-    // 本日のプレイ数カウント（created_at 先頭10文字で日付判定）
-    const createdStr = String(data[i][2] || '');
-    if (createdStr.slice(0, 10) === today) {
+    if (_mgDateStr_(data[i][2]) === today) {
       todayPlayed++;
     }
 
-    // 自己ベスト（最小の average_time）
     const t = Number(data[i][3]);
     if (Number.isFinite(t) && t > 0) {
       if (bestTimeMs === null || t < bestTimeMs) {
@@ -1453,32 +1416,6 @@ function getMinigameStatus(userId) {
 
 // =====================================================================
 // 6-2. saveMinigameResult : 試合結果を保存し、ランクに応じたXPを付与
-//
-//   payload: {
-//     action:      'saveMinigameResult',
-//     user_id:     string,
-//     averageTime: number (ミリ秒),
-//     rank:        'S' | 'A' | 'B' | 'C' | 'F'
-//   }
-//   戻り値:
-//     {
-//       saved:       true,
-//       earnedXp:    number,   // 今回付与XP
-//       totalXp:     number,   // 付与後の総XP
-//       level:       number,   // 付与後のレベル
-//       leveledUp:   boolean,  // レベルアップしたか
-//       todayPlayed: number,   // 保存後の本日プレイ数
-//       remaining:   number,   // 残りプレイ可能数
-//       locked:      boolean,  // 上限到達ならtrue
-//       averageTime: number,
-//       rank:        string,
-//     }
-//
-//   バリデーション:
-//     - 生徒以外 → エラー
-//     - 本日3回到達済み → エラー（429相当）
-//     - rank が S/A/B/C/F 以外 → エラー
-//     - averageTime が負数・非数 → エラー
 // =====================================================================
 function saveMinigameResult(payload) {
   const userId = payload.user_id;
@@ -1510,8 +1447,7 @@ function saveMinigameResult(payload) {
   let todayPlayed = 0;
   for (let i = 1; i < data.length; i++) {
     if (data[i][1] !== userId) continue;
-    const createdStr = String(data[i][2] || '');
-    if (createdStr.slice(0, 10) === today) {
+    if (_mgDateStr_(data[i][2]) === today) {
       todayPlayed++;
     }
   }
@@ -1530,8 +1466,7 @@ function saveMinigameResult(payload) {
   const id  = Utilities.getUuid();
   sh.appendRow([id, userId, now, avgMs, rank, earnedXp]);
 
-  // ── 6. XP加算＆レベルアップ判定（既存ヘルパー再利用） ──
-  // レベルアップ判定のため事前レベルを取得
+  // ── 6. XP加算＆レベルアップ判定 ──
   const beforeStatus = _getOrCreateUserStatus_(userId);
   const beforeLevel  = beforeStatus.level;
 
@@ -1569,4 +1504,56 @@ function saveMinigameResult(payload) {
     averageTime: avgMs,
     rank:        rank,
   };
+}
+
+// =====================================================================
+// 6-3. getMinigameRanking : 道場内ベストタイム上位10名を取得
+//
+//   引数: なし
+//   戻り値: Array<{ userId, name, bestTimeMs }>
+//     - 生徒ごとに最小の average_time（最速）を集計
+//     - bestTimeMs 昇順（速い順）で上位10名
+//     - 生徒マスタに存在し role==='student' のユーザーのみ対象
+// =====================================================================
+function getMinigameRanking() {
+  const sh = _sheet_('minigame_scores');
+  const data = sh.getDataRange().getValues();
+
+  // 生徒情報マップ（id -> { name, role }）
+  const usersMap = _getAllUsersMap_();
+
+  // userId -> bestTimeMs（最小値）を集計
+  const bestMap = {};
+  // 列: id(0), user_id(1), created_at(2), average_time(3), rank(4), earned_xp(5)
+  for (let i = 1; i < data.length; i++) {
+    const uid = data[i][1];
+    if (!uid) continue;
+
+    // 生徒以外（先生・退会者など）は除外
+    const u = usersMap[uid];
+    if (!u || u.role !== 'student') continue;
+
+    const t = Number(data[i][3]);
+    if (!Number.isFinite(t) || t <= 0) continue;
+
+    if (bestMap[uid] === undefined || t < bestMap[uid]) {
+      bestMap[uid] = t;
+    }
+  }
+
+  // 配列化 → 名前解決 → 昇順ソート → 上位10名
+  const ranking = Object.keys(bestMap).map(function (uid) {
+    const u = usersMap[uid];
+    return {
+      userId:     uid,
+      name:       u ? u.name : uid,
+      bestTimeMs: bestMap[uid],
+    };
+  });
+
+  ranking.sort(function (a, b) {
+    return a.bestTimeMs - b.bestTimeMs; // 速い（小さい）ほど上位
+  });
+
+  return ranking.slice(0, MINIGAME_RANKING_LIMIT);
 }

@@ -2,16 +2,18 @@
 
 /**
  * =====================================================================
- * 刹那ノ見切 (Setsuna no Mikiri) - 燃えろ剣士 移植版
+ * 刹那ノ見切 (Setsuna no Mikiri) - 燃えよ剣士 エンドコンテンツ
  * =====================================================================
  * テーマ: 熱血ダーク和風（漆黒 × 臙脂 × ゴールド）
  * 用途: 門下生（生徒）が遊べるボーナスXP獲得用ミニゲーム
  *
- * ★ lucide-react を使わず、アイコンを自前のインラインSVGで定義
- *
  * ステートマシン:
- *   waiting (READY/構え) → pre_okori (静寂・間合い)
+ *   waiting (構え) → pre_okori (間合い・無の静寂)
  *   → okori (起こり) ★計測開始 → strike (打突) → result
+ *
+ * ★ lucide-react を使わず、アイコンを自前のインラインSVGで定義
+ * ★ 1日5回プレイ制限
+ * ★ 見切りランキング（最速タイム上位10名）画面を追加
  * =====================================================================
  */
 
@@ -20,9 +22,11 @@ import Link from 'next/link';
 import {
   fetchMinigameStatus,
   saveMinigameResult,
+  fetchMinigameRanking,
   type MinigameRank,
   type MinigameSaveResult,
   type MinigameStatus,
+  type MinigameRankingEntry,
 } from '@/lib/api';
 
 // =====================================================================
@@ -35,18 +39,9 @@ interface IconProps {
 
 function ArrowLeft({ size = 20, className = '' }: IconProps) {
   return (
-    <svg
-      className={className}
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+      strokeLinejoin="round" aria-hidden="true">
       <path d="M19 12H5" />
       <path d="M12 19l-7-7 7-7" />
     </svg>
@@ -55,18 +50,9 @@ function ArrowLeft({ size = 20, className = '' }: IconProps) {
 
 function AlertTriangle({ size = 16, className = '' }: IconProps) {
   return (
-    <svg
-      className={className}
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+      strokeLinejoin="round" aria-hidden="true">
       <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
       <line x1="12" y1="9" x2="12" y2="13" />
       <line x1="12" y1="17" x2="12.01" y2="17" />
@@ -76,18 +62,9 @@ function AlertTriangle({ size = 16, className = '' }: IconProps) {
 
 function Loader2({ size = 20, className = '' }: IconProps) {
   return (
-    <svg
-      className={className}
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+      strokeLinejoin="round" aria-hidden="true">
       <path d="M21 12a9 9 0 1 1-6.219-8.56" />
     </svg>
   );
@@ -95,18 +72,9 @@ function Loader2({ size = 20, className = '' }: IconProps) {
 
 function Trophy({ size = 14, className = '' }: IconProps) {
   return (
-    <svg
-      className={className}
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+      strokeLinejoin="round" aria-hidden="true">
       <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" />
       <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" />
       <path d="M4 22h16" />
@@ -119,18 +87,9 @@ function Trophy({ size = 14, className = '' }: IconProps) {
 
 function BookOpen({ size = 16, className = '' }: IconProps) {
   return (
-    <svg
-      className={className}
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+      strokeLinejoin="round" aria-hidden="true">
       <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
       <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
     </svg>
@@ -139,18 +98,9 @@ function BookOpen({ size = 16, className = '' }: IconProps) {
 
 function Swords({ size = 16, className = '' }: IconProps) {
   return (
-    <svg
-      className={className}
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+      strokeLinejoin="round" aria-hidden="true">
       <polyline points="14.5 17.5 3 6 3 3 6 3 17.5 14.5" />
       <line x1="13" y1="19" x2="19" y2="13" />
       <line x1="16" y1="16" x2="20" y2="20" />
@@ -163,13 +113,24 @@ function Swords({ size = 16, className = '' }: IconProps) {
   );
 }
 
+function Crown({ size = 16, className = '' }: IconProps) {
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+      strokeLinejoin="round" aria-hidden="true">
+      <path d="M2 18h20" />
+      <path d="m2 6 4.5 4L12 4l5.5 6L22 6v9H2z" />
+    </svg>
+  );
+}
+
 // =====================================================================
 // 型定義
 // =====================================================================
 type HitPart = 'men' | 'kote' | 'do';
 type PatternId = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H';
 
-type ViewState = 'menu' | 'playing' | 'records';
+type ViewState = 'menu' | 'playing' | 'records' | 'ranking';
 
 /**
  * waiting:   構え（READY表示中）
@@ -229,7 +190,7 @@ const PATTERNS: Pattern[] = [
 ];
 
 const ROUNDS_PER_MATCH = 3;
-const MAX_MATCHES_PER_DAY = 3;
+const MAX_MATCHES_PER_DAY = 5; // ★ 1日5回に変更
 
 // =====================================================================
 // カットイン用：タイミング別のテキストプール（熱血和風）
@@ -316,6 +277,11 @@ export default function StudentMiniGamePage() {
   const [lastSaveResult, setLastSaveResult] = useState<MinigameSaveResult | null>(null);
   const [errorMessage, setErrorMessage]     = useState<string>('');
 
+  // ★ ランキング関連
+  const [ranking, setRanking]               = useState<MinigameRankingEntry[]>([]);
+  const [rankingLoading, setRankingLoading] = useState(false);
+  const [rankingError, setRankingError]     = useState<string>('');
+
   const okoriStartRef    = useRef<number | null>(null);
   const strikeStartRef   = useRef<number | null>(null);
   const timerRef         = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -350,6 +316,26 @@ export default function StudentMiniGamePage() {
       }
     })();
   }, []);
+
+  // ★ ランキング取得
+  const loadRanking = useCallback(async () => {
+    setRankingLoading(true);
+    setRankingError('');
+    try {
+      const data = await fetchMinigameRanking();
+      setRanking(data);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setRankingError(msg);
+    } finally {
+      setRankingLoading(false);
+    }
+  }, []);
+
+  const openRanking = useCallback(() => {
+    setViewState('ranking');
+    loadRanking();
+  }, [loadRanking]);
 
   const finishRound = useCallback((result: RoundResult) => {
     setLastResult(result);
@@ -446,6 +432,7 @@ export default function StudentMiniGamePage() {
     setResults([]);
     setLastResult(null);
     setLastSaveResult(null);
+    setErrorMessage('');
     setViewState('playing');
     setPhase('waiting');
     scheduleNextRound();
@@ -588,7 +575,7 @@ export default function StudentMiniGamePage() {
   const handleBackToMenu = useCallback(() => {
     if (timerRef.current) clearTimeout(timerRef.current);
     setViewState('menu');
-    setPhase('idle');
+    setPhase(matchCountRef.current >= MAX_MATCHES_PER_DAY ? 'locked' : 'idle');
     setResults([]);
     setLastResult(null);
     setLastSaveResult(null);
@@ -617,7 +604,7 @@ export default function StudentMiniGamePage() {
       </div>
 
       <header className="mikiri-header">
-        {viewState === 'playing' || viewState === 'records' ? (
+        {viewState === 'playing' || viewState === 'records' || viewState === 'ranking' ? (
           <button onClick={handleBackToMenu} className="mikiri-back" aria-label="戻る" type="button">
             <ArrowLeft size={20} />
           </button>
@@ -741,6 +728,17 @@ export default function StudentMiniGamePage() {
               )}
 
               <button
+                className="cyber-btn cyber-btn--gold"
+                onClick={openRanking}
+                type="button"
+              >
+                <span className="cyber-btn-icon"><Trophy size={16} /></span>
+                <span className="cyber-btn-bracket">【</span>
+                <span className="cyber-btn-label">見切りランキング</span>
+                <span className="cyber-btn-bracket">】</span>
+              </button>
+
+              <button
                 className="cyber-btn cyber-btn--secondary"
                 onClick={() => setViewState('records')}
                 type="button"
@@ -816,6 +814,84 @@ export default function StudentMiniGamePage() {
           </div>
         )}
 
+        {/* ============ ★ ランキング画面 ============ */}
+        {viewState === 'ranking' && (
+          <div className="overlay">
+            <div className="console-box console-box--ranking">
+              <div className="kanji-watermark" aria-hidden="true">頂</div>
+
+              <div className="console-prompt">
+                <Crown size={14} />
+                <span>見切りランキング</span>
+                <span className="prompt-blink">_</span>
+              </div>
+
+              <div className="menu-header menu-header--records">
+                <h2 className="menu-title-jp-main">頂の見切り</h2>
+                <p className="menu-title-jp-sub">― 道場最速 ・ 上位十名 ―</p>
+              </div>
+
+              <div className="menu-sep" />
+
+              {rankingLoading && (
+                <div className="loading-row" style={{ justifyContent: 'center' }}>
+                  <Loader2 size={20} className="animate-spin" />
+                  <span className="loading-text">番付を取り寄せ中<span className="dots">...</span></span>
+                </div>
+              )}
+
+              {!rankingLoading && rankingError && (
+                <p className="summary-error">※ 取得に失敗: {rankingError}</p>
+              )}
+
+              {!rankingLoading && !rankingError && ranking.length === 0 && (
+                <p className="console-msg" style={{ textAlign: 'center' }}>
+                  まだ記録がありませぬ。<br />一番乗りを目指されよ。
+                </p>
+              )}
+
+              {!rankingLoading && !rankingError && ranking.length > 0 && (
+                <div className="ranking-list">
+                  {ranking.map((entry, i) => {
+                    const rankNo = i + 1;
+                    const medalClass =
+                      rankNo === 1 ? 'rank-gold'
+                      : rankNo === 2 ? 'rank-silver'
+                      : rankNo === 3 ? 'rank-bronze'
+                      : '';
+                    return (
+                      <div key={entry.userId} className={`ranking-row ${medalClass}`}>
+                        <span className="ranking-no">
+                          {rankNo <= 3 ? <Crown size={14} /> : null}
+                          {pad2(rankNo)}
+                        </span>
+                        <span className="ranking-name">{entry.name}</span>
+                        <span className="ranking-time">{formatTime(entry.bestTimeMs)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="menu-sep" />
+
+              <button className="cyber-btn cyber-btn--gold" onClick={loadRanking} type="button" disabled={rankingLoading}>
+                <span className="cyber-btn-icon"><Loader2 size={16} className={rankingLoading ? 'animate-spin' : ''} /></span>
+                <span className="cyber-btn-bracket">【</span>
+                <span className="cyber-btn-label">番付を更新</span>
+                <span className="cyber-btn-bracket">】</span>
+              </button>
+
+              <button className="cyber-btn cyber-btn--secondary" onClick={handleBackToMenu} type="button">
+                <span className="cyber-btn-icon"><ArrowLeft size={16} /></span>
+                <span className="cyber-btn-bracket">【</span>
+                <span className="cyber-btn-label">道場へ戻る</span>
+                <span className="cyber-btn-bracket">】</span>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* ============ プレイ画面 ============ */}
         {viewState === 'playing' && phase === 'waiting' && (
           <div className="overlay overlay--passive">
@@ -875,8 +951,13 @@ export default function StudentMiniGamePage() {
 
               {lastSaveResult && (
                 <div className="data-row data-row--xp">
-                  <span className="data-key">{'》'} 獲得XP</span>
+                  <span className="data-key">{'》'} 獲得経験値</span>
                   <span className="data-val xp-val">+{lastSaveResult.earnedXp}</span>
+                </div>
+              )}
+              {lastSaveResult?.leveledUp && (
+                <div className="levelup-banner">
+                  ★ 昇格! Lv.{lastSaveResult.level} ★
                 </div>
               )}
               {!lastSaveResult && errorMessage && (
@@ -933,7 +1014,7 @@ export default function StudentMiniGamePage() {
                 <span>修練終了</span>
               </div>
               <h2 className="result-title">― 本日 ・ 打ち止め ―</h2>
-              <p className="console-msg">一日 三本 までと定めあり ・ 明日また参られよ</p>
+              <p className="console-msg">一日 五本 までと定めあり ・ 明日また参られよ</p>
               {bestTimeMs !== null && (
                 <div className="data-row" style={{ marginTop: 12 }}>
                   <span className="data-key">{'》'} 最速の見切り</span>
@@ -952,15 +1033,6 @@ export default function StudentMiniGamePage() {
 
       {/* ===================================================================
           styled-jsx: 熱血ダーク和風（漆黒 × 臙脂 × ゴールド）
-          基調色:
-            #000000 / #1a1a1a (漆黒・墨)
-            #2a1a1a (赤みを帯びた黒)
-            #8B0000 (暗い臙脂)
-            #B22222 (臙脂・ファイアブリック)
-            #FFD700 (黄金)
-            #fbbf24 (明るい金・ハイライト)
-            #f5e6c8 (生成り・テキスト)
-            #c9a96a (古びた金・サブテキスト)
       =================================================================== */}
       <style jsx>{`
         .mikiri-root {
@@ -1057,7 +1129,6 @@ export default function StudentMiniGamePage() {
           opacity: 0.85;
         }
         .mikiri-counter {
-          font-family: 'Noto Serif JP', monospace;
           font-size: 15px;
           color: #FFD700;
           background: rgba(178, 34, 34, 0.12);
@@ -1083,25 +1154,14 @@ export default function StudentMiniGamePage() {
           filter: drop-shadow(0 0 12px rgba(255, 215, 0, 0.35));
         }
 
-        /* =====================================================================
-           okori 予備動作アニメ
-        ===================================================================== */
+        /* ===== okori 予備動作アニメ ===== */
         :global(.kenshi-wrap.anim-okori) {
           animation: kenshiOkori 0.7s cubic-bezier(0.55, 0, 0.6, 0.7) forwards;
         }
         @keyframes kenshiOkori {
-          0% {
-            transform: translateY(0) scale(1);
-            filter: drop-shadow(0 0 12px rgba(255, 215, 0, 0.35));
-          }
-          40% {
-            transform: translateY(1.5px) scale(1.005);
-            filter: drop-shadow(0 0 16px rgba(178, 34, 34, 0.5));
-          }
-          100% {
-            transform: translateY(3px) scale(1.015);
-            filter: drop-shadow(0 0 22px rgba(220, 40, 40, 0.65));
-          }
+          0% { transform: translateY(0) scale(1); filter: drop-shadow(0 0 12px rgba(255, 215, 0, 0.35)); }
+          40% { transform: translateY(1.5px) scale(1.005); filter: drop-shadow(0 0 16px rgba(178, 34, 34, 0.5)); }
+          100% { transform: translateY(3px) scale(1.015); filter: drop-shadow(0 0 22px rgba(220, 40, 40, 0.65)); }
         }
         :global(.kenshi-wrap.anim-okori .sword) {
           animation: swordOkori 0.7s cubic-bezier(0.55, 0, 0.6, 0.7) forwards;
@@ -1152,6 +1212,7 @@ export default function StudentMiniGamePage() {
           background: radial-gradient(ellipse at center, rgba(10, 6, 6, 0.55) 0%, rgba(0, 0, 0, 0.88) 100%);
           backdrop-filter: blur(3px);
           padding: 16px;
+          overflow-y: auto;
         }
         .overlay--passive {
           background: transparent; backdrop-filter: none; pointer-events: none;
@@ -1179,9 +1240,7 @@ export default function StudentMiniGamePage() {
           50%      { opacity: 1;    transform: scale(1.06); }
         }
 
-        /* =====================================================================
-           木札風コンソールボックス（墨×臙脂ガラス）
-        ====================================================================== */
+        /* ===== 木札風コンソールボックス ===== */
         .console-box {
           position: relative;
           background:
@@ -1215,7 +1274,7 @@ export default function StudentMiniGamePage() {
           border-left: none; border-top: none;
         }
 
-        .console-box--menu, .console-box--records, .console-box--result {
+        .console-box--menu, .console-box--records, .console-box--result, .console-box--ranking {
           min-width: 300px;
         }
         .console-box--error {
@@ -1237,7 +1296,6 @@ export default function StudentMiniGamePage() {
           color: rgba(178, 34, 34, 0.1);
           letter-spacing: -0.05em;
           line-height: 0.85;
-          font-family: 'Noto Serif JP', serif;
           pointer-events: none;
           user-select: none;
           writing-mode: vertical-rl;
@@ -1350,9 +1408,7 @@ export default function StudentMiniGamePage() {
           background: rgba(90, 28, 28, 0.5);
           border-left-color: #FFD700;
         }
-        .data-key {
-          color: #FFD700;
-        }
+        .data-key { color: #FFD700; }
         .data-val {
           display: inline-flex; align-items: center; gap: 6px;
           color: #fff; font-weight: 700;
@@ -1369,6 +1425,23 @@ export default function StudentMiniGamePage() {
           text-shadow: 0 0 12px rgba(251, 191, 36, 0.7);
         }
 
+        .levelup-banner {
+          margin: 10px 0 4px;
+          padding: 8px 12px;
+          text-align: center;
+          font-weight: 900;
+          font-size: 14px;
+          letter-spacing: 0.15em;
+          color: #1a0606;
+          background: linear-gradient(135deg, #fbbf24, #FFD700);
+          box-shadow: 0 0 18px rgba(251, 191, 36, 0.6);
+          animation: levelupPulse 0.8s ease-in-out infinite;
+        }
+        @keyframes levelupPulse {
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.03); }
+        }
+
         .locked-bar {
           display: flex; align-items: center; justify-content: center; gap: 6px;
           margin: 12px 0 0; padding: 8px 12px;
@@ -1379,9 +1452,63 @@ export default function StudentMiniGamePage() {
           border-left: 3px solid #ffb04a;
         }
 
-        /* =====================================================================
-           和風ボタン（臙脂×ゴールド版）
-        ====================================================================== */
+        /* ===== ★ ランキングリスト ===== */
+        .ranking-list {
+          display: flex; flex-direction: column; gap: 5px;
+          margin: 4px 0;
+          position: relative; z-index: 1;
+        }
+        .ranking-row {
+          display: grid;
+          grid-template-columns: 48px 1fr auto;
+          gap: 10px;
+          align-items: center;
+          padding: 8px 12px;
+          background: rgba(60, 20, 20, 0.4);
+          border-left: 3px solid rgba(201, 169, 106, 0.4);
+          font-size: 13px;
+          transition: all 0.2s;
+        }
+        .ranking-row:hover {
+          background: rgba(90, 28, 28, 0.5);
+        }
+        .ranking-no {
+          display: inline-flex; align-items: center; gap: 4px;
+          font-weight: 900;
+          color: #c9a96a;
+          letter-spacing: 0.05em;
+        }
+        .ranking-name {
+          color: #f5e6c8;
+          font-weight: 700;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .ranking-time {
+          color: #fbbf24;
+          font-weight: 700;
+          text-align: right;
+          letter-spacing: 0.03em;
+        }
+        .ranking-row.rank-gold {
+          border-left-color: #FFD700;
+          background: linear-gradient(135deg, rgba(255, 215, 0, 0.14), rgba(60, 20, 20, 0.5));
+        }
+        .ranking-row.rank-gold .ranking-no { color: #FFD700; text-shadow: 0 0 10px rgba(255, 215, 0, 0.6); }
+        .ranking-row.rank-gold .ranking-name { color: #fff; }
+        .ranking-row.rank-silver {
+          border-left-color: #d8d8e0;
+          background: linear-gradient(135deg, rgba(216, 216, 224, 0.1), rgba(60, 20, 20, 0.5));
+        }
+        .ranking-row.rank-silver .ranking-no { color: #d8d8e0; }
+        .ranking-row.rank-bronze {
+          border-left-color: #cd7f32;
+          background: linear-gradient(135deg, rgba(205, 127, 50, 0.12), rgba(60, 20, 20, 0.5));
+        }
+        .ranking-row.rank-bronze .ranking-no { color: #e0975a; }
+
+        /* ===== 和風ボタン ===== */
         .cyber-btn {
           position: relative;
           display: flex; align-items: center; justify-content: center; gap: 8px;
@@ -1401,7 +1528,6 @@ export default function StudentMiniGamePage() {
           overflow: hidden;
           z-index: 1;
         }
-
         .cyber-btn::before {
           content: '';
           position: absolute;
@@ -1412,7 +1538,6 @@ export default function StudentMiniGamePage() {
           z-index: -1;
           box-shadow: 0 0 20px rgba(255, 215, 0, 0.6);
         }
-
         .cyber-btn::after {
           content: '';
           position: absolute;
@@ -1421,7 +1546,6 @@ export default function StudentMiniGamePage() {
           background: rgba(255, 215, 0, 0.4);
           transition: all 0.25s;
         }
-
         .cyber-btn:hover {
           color: #fff;
           border-color: #fbbf24;
@@ -1431,17 +1555,13 @@ export default function StudentMiniGamePage() {
             0 0 22px rgba(178, 34, 34, 0.4),
             inset 0 0 20px rgba(255, 215, 0, 0.08);
         }
-        .cyber-btn:hover::before {
-          width: 6px;
-        }
+        .cyber-btn:hover::before { width: 6px; }
         .cyber-btn:hover::after {
           width: 3px;
           background: #fbbf24;
           box-shadow: 0 0 12px #fbbf24;
         }
-        .cyber-btn:active {
-          transform: translateX(2px);
-        }
+        .cyber-btn:active { transform: translateX(2px); }
         .cyber-btn:disabled {
           background: rgba(40, 30, 30, 0.4);
           color: #6b5b4b;
@@ -1449,10 +1569,7 @@ export default function StudentMiniGamePage() {
           cursor: not-allowed;
           opacity: 0.5;
         }
-        .cyber-btn:disabled:hover {
-          padding-left: 18px;
-          box-shadow: none;
-        }
+        .cyber-btn:disabled:hover { padding-left: 18px; box-shadow: none; }
         .cyber-btn:disabled::before { width: 0; }
 
         .cyber-btn--primary {
@@ -1461,13 +1578,24 @@ export default function StudentMiniGamePage() {
           border-color: rgba(251, 191, 36, 0.55);
           box-shadow: 0 0 18px rgba(178, 34, 34, 0.3);
         }
-        .cyber-btn--primary::before {
-          background: linear-gradient(180deg, #fbbf24, #FFD700);
-        }
+        .cyber-btn--primary::before { background: linear-gradient(180deg, #fbbf24, #FFD700); }
         .cyber-btn--primary:hover {
           color: #fff;
           background: linear-gradient(135deg, rgba(178, 34, 34, 0.8), rgba(210, 50, 50, 0.7));
           border-color: #fbbf24;
+        }
+
+        .cyber-btn--gold {
+          background: linear-gradient(135deg, rgba(120, 90, 20, 0.55), rgba(80, 60, 15, 0.5));
+          color: #FFD700;
+          border-color: rgba(255, 215, 0, 0.5);
+        }
+        .cyber-btn--gold::before { background: linear-gradient(180deg, #FFD700, #fbbf24); }
+        .cyber-btn--gold:hover {
+          color: #1a0606;
+          background: linear-gradient(135deg, rgba(255, 215, 0, 0.85), rgba(251, 191, 36, 0.8));
+          border-color: #FFD700;
+          text-shadow: none;
         }
 
         .cyber-btn--secondary {
@@ -1475,47 +1603,27 @@ export default function StudentMiniGamePage() {
           color: #c9a96a;
           border-color: rgba(201, 169, 106, 0.38);
         }
-        .cyber-btn--secondary::before {
-          background: linear-gradient(180deg, #c9a96a, #8a6f3a);
-        }
-        .cyber-btn--secondary:hover {
-          color: #fff;
-          border-color: #c9a96a;
-        }
+        .cyber-btn--secondary::before { background: linear-gradient(180deg, #c9a96a, #8a6f3a); }
+        .cyber-btn--secondary:hover { color: #fff; border-color: #c9a96a; }
 
         .cyber-btn--danger {
           color: #ff9b8b;
           border-color: rgba(220, 60, 60, 0.5);
         }
-        .cyber-btn--danger::before {
-          background: linear-gradient(180deg, #ff5544, #8B0000);
-        }
+        .cyber-btn--danger::before { background: linear-gradient(180deg, #ff5544, #8B0000); }
         .cyber-btn--danger:hover {
           color: #fff;
           border-color: #ff7b6b;
           background: rgba(120, 25, 25, 0.5);
         }
 
-        .cyber-btn-bracket {
-          color: rgba(255, 215, 0, 0.55);
-          font-weight: 400;
-        }
-        .cyber-btn--primary .cyber-btn-bracket {
-          color: rgba(251, 191, 36, 0.7);
-        }
-        .cyber-btn--secondary .cyber-btn-bracket {
-          color: rgba(201, 169, 106, 0.55);
-        }
-        .cyber-btn--danger .cyber-btn-bracket {
-          color: rgba(255, 155, 139, 0.7);
-        }
-        .cyber-btn-label {
-          flex-shrink: 0;
-        }
-        .cyber-btn-icon {
-          display: inline-flex; align-items: center;
-          margin-right: 4px;
-        }
+        .cyber-btn-bracket { color: rgba(255, 215, 0, 0.55); font-weight: 400; }
+        .cyber-btn--primary .cyber-btn-bracket { color: rgba(251, 191, 36, 0.7); }
+        .cyber-btn--gold .cyber-btn-bracket { color: rgba(255, 215, 0, 0.7); }
+        .cyber-btn--secondary .cyber-btn-bracket { color: rgba(201, 169, 106, 0.55); }
+        .cyber-btn--danger .cyber-btn-bracket { color: rgba(255, 155, 139, 0.7); }
+        .cyber-btn-label { flex-shrink: 0; }
+        .cyber-btn-icon { display: inline-flex; align-items: center; margin-right: 4px; }
 
         /* ===== ローディング ===== */
         .loading-row {
@@ -1629,18 +1737,14 @@ export default function StudentMiniGamePage() {
           animation: flashRed 0.5s ease-out;
           pointer-events: none; z-index: 4;
         }
-        @keyframes flashRed {
-          0%   { opacity: 1; } 100% { opacity: 0; }
-        }
+        @keyframes flashRed { 0% { opacity: 1; } 100% { opacity: 0; } }
         .flash-okori {
           position: absolute; inset: 0;
           background: radial-gradient(circle at center, rgba(220, 40, 40, 0.22) 0%, transparent 60%);
           animation: flashOkori 0.18s ease-out;
           pointer-events: none; z-index: 4;
         }
-        @keyframes flashOkori {
-          0%   { opacity: 1; } 100% { opacity: 0; }
-        }
+        @keyframes flashOkori { 0% { opacity: 1; } 100% { opacity: 0; } }
 
         /* ===== 試合終了サマリー ===== */
         .result-title {
@@ -1739,10 +1843,7 @@ export default function StudentMiniGamePage() {
         .summary-round.ok { color: #FFD700; }
         .summary-round.ng { color: #ff9b8b; }
         .summary-round span:last-child { text-align: right; }
-        .round-name {
-          letter-spacing: 0.05em;
-          font-size: 11px;
-        }
+        .round-name { letter-spacing: 0.05em; font-size: 11px; }
         .summary-rank {
           font-size: 10px !important; padding: 2px 4px !important;
           font-weight: 900; text-align: center;

@@ -3,6 +3,7 @@
 // 燃えろ剣士 - ボトムナビゲーション
 // 小学生剣士がスマホでサクサク画面遷移できる下部固定ナビ
 // ロール（生徒/先生）に応じて表示メニューを切替
+// Phase 6: 生徒メニューに「見切り」（ミニゲーム）を追加
 // =====================================================================
 
 'use client';
@@ -56,6 +57,24 @@ function UsersIcon({ size = 24, color, active }: IconProps) {
   );
 }
 
+// ★ Phase 6: ミニゲーム「見切り」用アイコン（双剣）
+function SwordsIcon({ size = 24, color, active }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke={color} strokeWidth={active ? 2.5 : 2}
+      strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="14.5 17.5 3 6 3 3 6 3 17.5 14.5" />
+      <line x1="13" y1="19" x2="19" y2="13" />
+      <line x1="16" y1="16" x2="20" y2="20" />
+      <line x1="19" y1="21" x2="21" y2="19" />
+      <polyline points="14.5 6.5 18 3 21 3 21 6 17.5 9.5" />
+      <line x1="5" y1="14" x2="9" y2="18" />
+      <line x1="7" y1="17" x2="4" y2="20" />
+      <line x1="3" y1="19" x2="5" y2="21" />
+    </svg>
+  );
+}
+
 function LogOutIcon({ size = 24, color, active }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
@@ -84,14 +103,15 @@ interface NavItem {
 }
 
 const STUDENT_ITEMS: NavItem[] = [
-  { key: 'home',   label: 'ホーム',   href: '/',       icon: HomeIcon,   emoji: '🏠' },
-  { key: 'record', label: 'きろく',   href: '/record', icon: RecordIcon, emoji: '📝' },
-  { key: 'logout', label: '退場',     action: 'logout', icon: LogOutIcon, emoji: '🚪' },
+  { key: 'home',     label: 'ホーム', href: '/',                 icon: HomeIcon,   emoji: '🏠' },
+  { key: 'record',   label: '記録',   href: '/record',           icon: RecordIcon, emoji: '📝' },
+  { key: 'minigame', label: '見切り', href: '/student/minigame', icon: SwordsIcon, emoji: '⚔️' }, // ★ Phase 6 追加
+  { key: 'logout',   label: '退場',   action: 'logout',          icon: LogOutIcon, emoji: '🚪' },
 ];
 
 const TEACHER_ITEMS: NavItem[] = [
-  { key: 'students', label: 'もんかせい', href: '/teacher', icon: UsersIcon,  emoji: '👥' },
-  { key: 'logout',   label: '退場',       action: 'logout', icon: LogOutIcon, emoji: '🚪' },
+  { key: 'students', label: '門下生', href: '/teacher', icon: UsersIcon,  emoji: '👥' },
+  { key: 'logout',   label: '退場',   action: 'logout', icon: LogOutIcon, emoji: '🚪' },
 ];
 
 // 表示しないパス
