@@ -1366,3 +1366,207 @@ function _logError_(action, message, detail) {
     // サイレントに
   }
 }
+
+// =====================================================================
+// ★★★ Phase 6: ミニゲーム『刹那ノ見切』バックエンド ★★★
+// =====================================================================
+//
+// 仕様:
+//  - 門下生（生徒）専用のボーナスXP獲得ミニゲーム
+//  - 1日3回まで（Asia/Tokyo 日付境界でリセット）
+//  - ランク別獲得XP: S=50 / A=30 / B=20 / C=10 / F=0
+//  - 既存の _addXpToUser_ を再利用して総XPへ加算＆レベルアップ判定
+//  - minigame_scores シート（SHEET_SCHEMAS で定義済み）に履歴を記録
+//    列: id, user_id, created_at, average_time, rank, earned_xp
+// =====================================================================
+
+// ミニゲーム定数
+const MINIGAME_DAILY_LIMIT = 3;
+
+// ランク別獲得XP（S=50 / A=30 / B=20 / C=10 / F=0）
+const MINIGAME_XP_TABLE = {
+  S: 50,
+  A: 30,
+  B: 20,
+  C: 10,
+  F: 0,
+};
+
+// =====================================================================
+// 6-1. getMinigameStatus : 本日のプレイ状況＆自己ベストを取得
+//
+//   引数: userId（生徒ID）
+//   戻り値:
+//     {
+//       todayPlayed: number,        // 本日プレイ回数（0〜3）
+//       dailyLimit:  number,        // 3
+//       remaining:   number,        // 残りプレイ可能数
+//       locked:      boolean,       // 上限到達ならtrue
+//       bestTimeMs:  number | null, // 自己ベスト平均反応速度(ms)
+//     }
+// =====================================================================
+function getMinigameStatus(userId) {
+  if (!userId) throw new Error('user_idが指定されていません');
+
+  const user = _getUser_(userId);
+  if (!user) throw new Error('ユーザーが見つかりません: ' + userId);
+  if (user.role !== 'student') {
+    throw new Error('門下生のみがミニゲームを利用できます');
+  }
+
+  const today = _todayStr_();
+  const sh = _sheet_('minigame_scores');
+  const data = sh.getDataRange().getValues();
+
+  // 列: id(0), user_id(1), created_at(2), average_time(3), rank(4), earned_xp(5)
+  let todayPlayed = 0;
+  let bestTimeMs  = null;
+
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][1] !== userId) continue;
+
+    // 本日のプレイ数カウント（created_at 先頭10文字で日付判定）
+    const createdStr = String(data[i][2] || '');
+    if (createdStr.slice(0, 10) === today) {
+      todayPlayed++;
+    }
+
+    // 自己ベスト（最小の average_time）
+    const t = Number(data[i][3]);
+    if (Number.isFinite(t) && t > 0) {
+      if (bestTimeMs === null || t < bestTimeMs) {
+        bestTimeMs = t;
+      }
+    }
+  }
+
+  const remaining = Math.max(0, MINIGAME_DAILY_LIMIT - todayPlayed);
+
+  return {
+    todayPlayed: todayPlayed,
+    dailyLimit:  MINIGAME_DAILY_LIMIT,
+    remaining:   remaining,
+    locked:      todayPlayed >= MINIGAME_DAILY_LIMIT,
+    bestTimeMs:  bestTimeMs,
+  };
+}
+
+// =====================================================================
+// 6-2. saveMinigameResult : 試合結果を保存し、ランクに応じたXPを付与
+//
+//   payload: {
+//     action:      'saveMinigameResult',
+//     user_id:     string,
+//     averageTime: number (ミリ秒),
+//     rank:        'S' | 'A' | 'B' | 'C' | 'F'
+//   }
+//   戻り値:
+//     {
+//       saved:       true,
+//       earnedXp:    number,   // 今回付与XP
+//       totalXp:     number,   // 付与後の総XP
+//       level:       number,   // 付与後のレベル
+//       leveledUp:   boolean,  // レベルアップしたか
+//       todayPlayed: number,   // 保存後の本日プレイ数
+//       remaining:   number,   // 残りプレイ可能数
+//       locked:      boolean,  // 上限到達ならtrue
+//       averageTime: number,
+//       rank:        string,
+//     }
+//
+//   バリデーション:
+//     - 生徒以外 → エラー
+//     - 本日3回到達済み → エラー（429相当）
+//     - rank が S/A/B/C/F 以外 → エラー
+//     - averageTime が負数・非数 → エラー
+// =====================================================================
+function saveMinigameResult(payload) {
+  const userId = payload.user_id;
+  if (!userId) throw new Error('user_idが指定されていません');
+
+  // ── 1. ユーザー＆権限チェック ──
+  const user = _getUser_(userId);
+  if (!user) throw new Error('ユーザーが見つかりません: ' + userId);
+  if (user.role !== 'student') {
+    throw new Error('門下生のみがミニゲームを利用できます');
+  }
+
+  // ── 2. 入力検証 ──
+  const avgMs = Math.floor(Number(payload.averageTime));
+  if (!Number.isFinite(avgMs) || avgMs < 0) {
+    throw new Error('averageTimeは0以上の数値で指定してください');
+  }
+
+  const rank = String(payload.rank || '').toUpperCase();
+  if (!MINIGAME_XP_TABLE.hasOwnProperty(rank)) {
+    throw new Error('rankはS/A/B/C/Fのいずれかで指定してください: ' + payload.rank);
+  }
+
+  // ── 3. 本日プレイ数チェック（サーバーサイドで再検証） ──
+  const today = _todayStr_();
+  const sh = _sheet_('minigame_scores');
+  const data = sh.getDataRange().getValues();
+
+  let todayPlayed = 0;
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][1] !== userId) continue;
+    const createdStr = String(data[i][2] || '');
+    if (createdStr.slice(0, 10) === today) {
+      todayPlayed++;
+    }
+  }
+
+  if (todayPlayed >= MINIGAME_DAILY_LIMIT) {
+    throw new Error(
+      '本日の立ち合い上限（' + MINIGAME_DAILY_LIMIT + '本）に達しています',
+    );
+  }
+
+  // ── 4. 獲得XP決定 ──
+  const earnedXp = MINIGAME_XP_TABLE[rank];
+
+  // ── 5. minigame_scores に履歴を記録 ──
+  const now = _nowStr_();
+  const id  = Utilities.getUuid();
+  sh.appendRow([id, userId, now, avgMs, rank, earnedXp]);
+
+  // ── 6. XP加算＆レベルアップ判定（既存ヘルパー再利用） ──
+  // レベルアップ判定のため事前レベルを取得
+  const beforeStatus = _getOrCreateUserStatus_(userId);
+  const beforeLevel  = beforeStatus.level;
+
+  let updated;
+  if (earnedXp > 0) {
+    const avgSec = (avgMs / 1000).toFixed(3);
+    updated = _addXpToUser_(
+      userId,
+      earnedXp,
+      'minigame',
+      `刹那ノ見切（${rank}ランク・平均見切り${avgSec}秒）`,
+    );
+  } else {
+    // F ランク（0XP）は xp_history を汚さず、現状ステータスをそのまま返す
+    updated = {
+      total_xp: beforeStatus.total_xp,
+      level:    beforeStatus.level,
+    };
+  }
+
+  const leveledUp = updated.level > beforeLevel;
+
+  // ── 7. 保存後の状態を返す ──
+  const newTodayPlayed = todayPlayed + 1;
+
+  return {
+    saved:       true,
+    earnedXp:    earnedXp,
+    totalXp:     updated.total_xp,
+    level:       updated.level,
+    leveledUp:   leveledUp,
+    todayPlayed: newTodayPlayed,
+    remaining:   Math.max(0, MINIGAME_DAILY_LIMIT - newTodayPlayed),
+    locked:      newTodayPlayed >= MINIGAME_DAILY_LIMIT,
+    averageTime: avgMs,
+    rank:        rank,
+  };
+}

@@ -2,6 +2,7 @@
 // =====================================================================
 // 燃えよ剣士 - GAS APIクライアント & SWRフック
 // Phase 5: 全体評価（一括評価）API追加
+// Phase 6: ミニゲーム『刹那ノ見切』API追加
 // =====================================================================
 
 import useSWR, { SWRConfiguration, SWRResponse } from 'swr';
@@ -387,3 +388,141 @@ export const SWR_KEYS = {
   studentDetail: (teacherId: string, studentId: string) =>
     buildKey('getStudentDetail', { teacher_id: teacherId, student_id: studentId }),
 } as const;
+
+// =====================================================================
+// ★★★ Phase 6 追加: ミニゲーム『刹那ノ見切』API ★★★
+// =====================================================================
+
+/**
+ * ミニゲームのランク（フロント・GAS共通）
+ */
+export type MinigameRank = 'S' | 'A' | 'B' | 'C' | 'F';
+
+/**
+ * 本日のプレイ状況レスポンス（getMinigameStatus）
+ */
+export interface MinigameStatus {
+  /** 本日プレイ済み回数（0〜3） */
+  todayPlayed: number;
+  /** 1日の上限（3） */
+  dailyLimit: number;
+  /** 残りプレイ可能数 */
+  remaining: number;
+  /** 上限到達でロックされているか */
+  locked: boolean;
+  /** 自己ベスト平均反応速度（ms）。記録なしは null */
+  bestTimeMs: number | null;
+}
+
+/**
+ * 試合結果保存レスポンス（saveMinigameResult）
+ */
+export interface MinigameSaveResult {
+  saved:       true;
+  /** 今回の獲得経験値 */
+  earnedXp:    number;
+  /** 保存後の総経験値 */
+  totalXp:     number;
+  /** 保存後のレベル */
+  level:       number;
+  /** レベルアップしたか */
+  leveledUp:   boolean;
+  /** 保存後の本日プレイ回数 */
+  todayPlayed: number;
+  /** 残りプレイ可能数 */
+  remaining:   number;
+  /** 上限到達でロックか */
+  locked:      boolean;
+  /** 平均反応速度（ms） */
+  averageTime: number;
+  /** 総合ランク */
+  rank:        string;
+}
+
+/**
+ * 内部API: 本日のプレイ状況を取得（GET）
+ */
+export async function fetchMinigameStatusApi(
+  userId: string,
+): Promise<MinigameStatus> {
+  return gasGet<MinigameStatus>('getMinigameStatus', { user_id: userId });
+}
+
+/**
+ * 公開ラッパー: ログイン中の生徒IDを内部で付与してプレイ状況を取得
+ * ミニゲーム画面の初期化時に呼ぶ。
+ */
+export async function fetchMinigameStatus(): Promise<MinigameStatus> {
+  const me = getAuthUser();
+  if (!me || me.role !== 'student') {
+    throw new Error('門下生としてログインしていません');
+  }
+  return fetchMinigameStatusApi(me.id);
+}
+
+/**
+ * 内部API: 試合結果を保存（POST）
+ */
+export async function saveMinigameResultApi(
+  payload: {
+    user_id:     string;
+    averageTime: number;
+    rank:        MinigameRank;
+  },
+): Promise<MinigameSaveResult> {
+  return gasPost<MinigameSaveResult>({
+    action:      'saveMinigameResult',
+    ...payload,
+  });
+}
+
+/**
+ * 公開ラッパー: ログイン中の生徒IDを内部で付与して試合結果を保存
+ * 1試合（3本）終了時に呼ぶ。ランクに応じたXPが付与される。
+ */
+export async function saveMinigameResult(
+  payload: {
+    averageTime: number;
+    rank:        MinigameRank;
+  },
+): Promise<MinigameSaveResult> {
+  const me = getAuthUser();
+  if (!me || me.role !== 'student') {
+    throw new Error('門下生としてログインしていません');
+  }
+
+  // 軽い入力ガード
+  const avg = Number(payload.averageTime);
+  if (!Number.isFinite(avg) || avg < 0) {
+    throw new Error('平均反応時間が不正です');
+  }
+  const validRanks: MinigameRank[] = ['S', 'A', 'B', 'C', 'F'];
+  if (!validRanks.includes(payload.rank)) {
+    throw new Error('ランクが不正です');
+  }
+
+  return saveMinigameResultApi({
+    user_id:     me.id,
+    averageTime: Math.round(avg),
+    rank:        payload.rank,
+  });
+}
+
+// =====================================================================
+// SWRフック: ミニゲームのプレイ状況（任意・5秒キャッシュ）
+// =====================================================================
+export function useMinigameStatusSWR() {
+  const me = typeof window !== 'undefined' ? getAuthUser() : null;
+  const key = me?.role === 'student'
+    ? buildKey('getMinigameStatus', { user_id: me.id })
+    : null;
+
+  return useSWR<MinigameStatus, Error>(
+    key,
+    async () => gasGet<MinigameStatus>('getMinigameStatus', { user_id: me!.id }),
+    {
+      ...SWR_BASE_CONFIG,
+      dedupingInterval: SWR_DEDUP.DASHBOARD,
+    },
+  );
+}
