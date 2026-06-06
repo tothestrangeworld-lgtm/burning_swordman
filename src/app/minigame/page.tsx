@@ -4,21 +4,30 @@
  * =====================================================================
  * 刹那ノ見切 (Setsuna no Mikiri) - 燃えよ剣士 エンドコンテンツ
  * =====================================================================
- * テーマ: 熱血ダーク和風（漆黒 × 臙脂 × ゴールド）
+ * テーマ: 熱血ポップ和風（温かみ臙脂 × ゴールド × 絵文字いっぱい）🔥⚔️
  * 用途: 門下生（生徒）が遊べるボーナスXP獲得用ミニゲーム
  *
  * ステートマシン:
- *   waiting (構え) → pre_okori (間合い・無の静寂)
- *   → okori (起こり) ★計測開始 → strike (打突) → result
+ *   waiting (構え) → pre_okori (間合い) → okori (起こり)★計測開始 → strike → result
  *
- * ★ lucide-react を使わず、アイコンを自前のインラインSVGで定義
+ * ★ lucide-react 不使用（自前インラインSVG）
  * ★ 1日5回プレイ制限
- * ★ 見切りランキング（最速タイム上位10名）画面を追加
+ * ★ 見切りランキング（TOP10 ＋ Recharts タイム推移グラフ）
  * =====================================================================
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from 'recharts';
 import {
   fetchMinigameStatus,
   saveMinigameResult,
@@ -26,11 +35,11 @@ import {
   type MinigameRank,
   type MinigameSaveResult,
   type MinigameStatus,
-  type MinigameRankingEntry,
+  type MinigameRankingResponse,
 } from '@/lib/api';
 
 // =====================================================================
-// アイコン（lucide-react の代替・自前インラインSVG）
+// アイコン（自前インラインSVG）
 // =====================================================================
 interface IconProps {
   size?:      number;
@@ -48,78 +57,12 @@ function ArrowLeft({ size = 20, className = '' }: IconProps) {
   );
 }
 
-function AlertTriangle({ size = 16, className = '' }: IconProps) {
-  return (
-    <svg className={className} width={size} height={size} viewBox="0 0 24 24"
-      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
-      strokeLinejoin="round" aria-hidden="true">
-      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-      <line x1="12" y1="9" x2="12" y2="13" />
-      <line x1="12" y1="17" x2="12.01" y2="17" />
-    </svg>
-  );
-}
-
 function Loader2({ size = 20, className = '' }: IconProps) {
   return (
     <svg className={className} width={size} height={size} viewBox="0 0 24 24"
       fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
       strokeLinejoin="round" aria-hidden="true">
       <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-    </svg>
-  );
-}
-
-function Trophy({ size = 14, className = '' }: IconProps) {
-  return (
-    <svg className={className} width={size} height={size} viewBox="0 0 24 24"
-      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
-      strokeLinejoin="round" aria-hidden="true">
-      <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" />
-      <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" />
-      <path d="M4 22h16" />
-      <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
-      <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
-      <path d="M18 2H6v7a6 6 0 0 0 12 0V2Z" />
-    </svg>
-  );
-}
-
-function BookOpen({ size = 16, className = '' }: IconProps) {
-  return (
-    <svg className={className} width={size} height={size} viewBox="0 0 24 24"
-      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
-      strokeLinejoin="round" aria-hidden="true">
-      <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
-      <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
-    </svg>
-  );
-}
-
-function Swords({ size = 16, className = '' }: IconProps) {
-  return (
-    <svg className={className} width={size} height={size} viewBox="0 0 24 24"
-      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
-      strokeLinejoin="round" aria-hidden="true">
-      <polyline points="14.5 17.5 3 6 3 3 6 3 17.5 14.5" />
-      <line x1="13" y1="19" x2="19" y2="13" />
-      <line x1="16" y1="16" x2="20" y2="20" />
-      <line x1="19" y1="21" x2="21" y2="19" />
-      <polyline points="14.5 6.5 18 3 21 3 21 6 17.5 9.5" />
-      <line x1="5" y1="14" x2="9" y2="18" />
-      <line x1="7" y1="17" x2="4" y2="20" />
-      <line x1="3" y1="19" x2="5" y2="21" />
-    </svg>
-  );
-}
-
-function Crown({ size = 16, className = '' }: IconProps) {
-  return (
-    <svg className={className} width={size} height={size} viewBox="0 0 24 24"
-      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
-      strokeLinejoin="round" aria-hidden="true">
-      <path d="M2 18h20" />
-      <path d="m2 6 4.5 4L12 4l5.5 6L22 6v9H2z" />
     </svg>
   );
 }
@@ -132,12 +75,6 @@ type PatternId = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H';
 
 type ViewState = 'menu' | 'playing' | 'records' | 'ranking';
 
-/**
- * waiting:   構え（READY表示中）
- * pre_okori: 間合い（無の静寂）
- * okori:     起こり ★ここで計測スタート
- * strike:    打突
- */
 type GamePhase =
   | 'loading'
   | 'idle'
@@ -190,42 +127,44 @@ const PATTERNS: Pattern[] = [
 ];
 
 const ROUNDS_PER_MATCH = 3;
-const MAX_MATCHES_PER_DAY = 5; // ★ 1日5回に変更
+const MAX_MATCHES_PER_DAY = 5;
+
+// グラフの線カラー（上位5名分）
+const CHART_COLORS = ['#FFD700', '#ff7b6b', '#7bd88f', '#7bb0ff', '#d89bff'];
 
 // =====================================================================
-// カットイン用：タイミング別のテキストプール（熱血和風）
+// カットイン用テキスト（熱血ポップ）🔥
 // =====================================================================
 const CUTIN_S = [
-  '一本!',
-  '喪神無想',
-  '心眼開眼!',
-  '神速の見切り!',
-  '会心の一撃!',
+  '一本！🔥',
+  '神速だ！⚡',
+  '心眼さえた！✨',
+  'すごいぞ！💯',
+  '会心の一撃！💥',
 ];
 const CUTIN_A = [
-  '見事!',
-  '応じ技決まる!',
-  '一本!',
-  'そこだ!',
-  'くらえ!',
-  '冴え渡る太刀!',
+  'お見事！👏',
+  'きまった！⚔️',
+  '一本！🔥',
+  'そこだ！💨',
+  'かっこいい！✨',
 ];
 const CUTIN_BC = [
-  '辛うじて!',
-  '危機一髪!',
-  '間一髪の見切り...',
-  '何とか凌いだ...',
-  'ギリギリ...',
+  'ナイス！👍',
+  'ギリギリセーフ！😅',
+  'あぶなかった〜💦',
+  'なんとか！🌀',
+  'おしい、でもOK！👌',
 ];
 const CUTIN_FAIL = [
-  '撃たれた...',
-  '読み負け!',
-  '無念...',
+  'うたれた〜😵',
+  'ざんねん！💧',
+  'つぎがんばろ！💪',
 ];
 const CUTIN_TOO_EARLY = [
-  'お手付き!',
-  '気が早い!',
-  '慌てるべからず!',
+  'お手つき！😂',
+  'はやい！はやい！💦',
+  'おちついて〜🍵',
 ];
 
 const pickRandom = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
@@ -254,6 +193,105 @@ function calcOverallRank(roundResults: RoundResult[]): MinigameRank {
   return 'C';
 }
 
+// ランクごとの応援メッセージ（結果画面用）🔥
+function rankCheer(rank: MinigameRank): string {
+  switch (rank) {
+    case 'S': return 'しんがん全開！道場のヒーローだ！🦸🔥';
+    case 'A': return 'めちゃくちゃ強い！その調子だ！⚔️✨';
+    case 'B': return 'いい見切り！もう一歩でAランク！💪';
+    case 'C': return 'ナイスチャレンジ！次はもっといけるぞ！🌱';
+    default:  return 'ドンマイ！何回でも挑戦できるぞ！💪🔥';
+  }
+}
+
+// =====================================================================
+// ★ ランキング推移グラフ（Recharts LineChart）
+// =====================================================================
+interface RankingChartProps {
+  history: MinigameRankingResponse['history'];
+}
+
+function RankingChart({ history }: RankingChartProps) {
+  // recharts 用に { date, [name]: 秒 } の配列へ変換
+  const chartData = useMemo(() => {
+    return history.dates.map((label, idx) => {
+      const row: Record<string, number | string | null> = { date: label };
+      history.series.forEach((s) => {
+        const ms = s.points[idx];
+        // ミリ秒 → 秒（小数3桁）。null はそのまま（線が途切れる）
+        row[s.name] = ms === null || ms === undefined
+          ? null
+          : Math.round((ms / 1000) * 1000) / 1000;
+      });
+      return row;
+    });
+  }, [history]);
+
+  if (!history.series || history.series.length === 0) {
+    return (
+      <p className="chart-empty">📉 まだグラフにできる記録がないよ。<br />たくさん挑戦してね！🔥</p>
+    );
+  }
+
+  return (
+    <div className="chart-wrap">
+      <p className="chart-caption">📈 みんなのタイム推移（短いほどスゴイ！）</p>
+      <div className="chart-box">
+        <ResponsiveContainer width="100%" height={220}>
+          <LineChart data={chartData} margin={{ top: 8, right: 12, bottom: 4, left: -12 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,215,0,0.12)" />
+            <XAxis
+              dataKey="date"
+              tick={{ fill: '#f5e6c8', fontSize: 10 }}
+              stroke="rgba(255,215,0,0.4)"
+            />
+            <YAxis
+              tick={{ fill: '#f5e6c8', fontSize: 10 }}
+              stroke="rgba(255,215,0,0.4)"
+              width={44}
+              domain={['auto', 'auto']}
+              tickFormatter={(v) => `${v}s`}
+            />
+            <Tooltip
+              contentStyle={{
+                background: 'rgba(30,14,14,0.95)',
+                border: '1px solid #FFD700',
+                borderRadius: 8,
+                color: '#f5e6c8',
+                fontSize: 12,
+              }}
+              labelStyle={{ color: '#FFD700', fontWeight: 700 }}
+              formatter={(value, name) => {
+                if (value === null || value === undefined) {
+                  return ['きろくなし', name as string];
+                }
+                return [`${value}秒`, name as string];
+              }}
+            />
+
+            <Legend
+              wrapperStyle={{ fontSize: 11, color: '#f5e6c8' }}
+              iconType="circle"
+            />
+            {history.series.map((s, i) => (
+              <Line
+                key={s.userId}
+                type="monotone"
+                dataKey={s.name}
+                stroke={CHART_COLORS[i % CHART_COLORS.length]}
+                strokeWidth={2.5}
+                dot={{ r: 3, strokeWidth: 1 }}
+                activeDot={{ r: 5 }}
+                connectNulls
+              />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
 // =====================================================================
 // メインコンポーネント
 // =====================================================================
@@ -277,8 +315,8 @@ export default function StudentMiniGamePage() {
   const [lastSaveResult, setLastSaveResult] = useState<MinigameSaveResult | null>(null);
   const [errorMessage, setErrorMessage]     = useState<string>('');
 
-  // ★ ランキング関連
-  const [ranking, setRanking]               = useState<MinigameRankingEntry[]>([]);
+  // ★ ランキング関連（top + history）
+  const [ranking, setRanking]               = useState<MinigameRankingResponse | null>(null);
   const [rankingLoading, setRankingLoading] = useState(false);
   const [rankingError, setRankingError]     = useState<string>('');
 
@@ -382,22 +420,13 @@ export default function StudentMiniGamePage() {
     });
   }, [finishRound]);
 
-  // ===================================================================
-  // 4段階タイマー
-  //   waiting (構え 1.0〜2.0s)
-  //   → pre_okori (間合い 1.5〜3.0s)
-  //   → okori (起こり 0.4〜1.0s) ★ここで計測スタート
-  //   → strike (打突 pattern.strikeDuration)
-  // ===================================================================
   const scheduleNextRound = useCallback(() => {
     const waitMs = randomBetween(1000, 2000);
     if (timerRef.current) clearTimeout(timerRef.current);
 
-    // [1] waiting フェーズ（構え）
     timerRef.current = setTimeout(() => {
       setPhase('pre_okori');
 
-      // [2] pre_okori フェーズ（間合い）
       const preOkoriMs = randomBetween(1500, 3000);
       timerRef.current = setTimeout(() => {
         const pattern = pickRandomPattern();
@@ -407,13 +436,11 @@ export default function StudentMiniGamePage() {
         setFlashType('okori');
         setTimeout(() => setFlashType('none'), 120);
 
-        // [3] okori フェーズ
         const okoriMs = randomBetween(400, 1000);
         timerRef.current = setTimeout(() => {
           strikeStartRef.current = performance.now();
           setPhase('strike');
 
-          // [4] strike フェーズ
           timerRef.current = setTimeout(() => {
             handleTimeout(pattern);
           }, pattern.strikeDuration);
@@ -438,11 +465,7 @@ export default function StudentMiniGamePage() {
     scheduleNextRound();
   }, [scheduleNextRound]);
 
-  // ===================================================================
-  // タップハンドラ
-  // ===================================================================
   const handleTap = (part: HitPart) => {
-    // waiting / pre_okori 中のタップ → お手付き
     if (phase === 'waiting' || phase === 'pre_okori') {
       if (timerRef.current) clearTimeout(timerRef.current);
       const dummyPattern = pickRandomPattern();
@@ -465,7 +488,6 @@ export default function StudentMiniGamePage() {
 
     const isCorrectPart = part === currentPattern.correctPart;
 
-    // 部位ミス
     if (!isCorrectPart) {
       finishRound({
         patternId:   currentPattern.id,
@@ -480,13 +502,11 @@ export default function StudentMiniGamePage() {
       return;
     }
 
-    // ── 正しい部位タップ ──
     const totalReactionMs = okoriStartRef.current
       ? performance.now() - okoriStartRef.current
       : 0;
 
     if (phase === 'okori') {
-      // Sランク: 起こりを捉えた大成功
       finishRound({
         patternId:   currentPattern.id,
         success:     true,
@@ -500,7 +520,6 @@ export default function StudentMiniGamePage() {
       return;
     }
 
-    // strike フェーズ
     const delayFromStrike = strikeStartRef.current
       ? performance.now() - strikeStartRef.current
       : 0;
@@ -599,25 +618,24 @@ export default function StudentMiniGamePage() {
     <div className="mikiri-root" key={shakeKey} data-shake={shakeKey > 0 ? 'on' : 'off'}>
       <div className="mikiri-bg" aria-hidden="true">
         <div className="mikiri-grid" />
-        <div className="mikiri-scan" />
-        <div className="mikiri-vignette" />
+        <div className="mikiri-glow" />
       </div>
 
       <header className="mikiri-header">
         {viewState === 'playing' || viewState === 'records' || viewState === 'ranking' ? (
-          <button onClick={handleBackToMenu} className="mikiri-back" aria-label="戻る" type="button">
+          <button onClick={handleBackToMenu} className="mikiri-back" aria-label="もどる" type="button">
             <ArrowLeft size={20} />
           </button>
         ) : (
-          <Link href="/student" className="mikiri-back" aria-label="戻る">
+          <Link href="/student" className="mikiri-back" aria-label="もどる">
             <ArrowLeft size={20} />
           </Link>
         )}
         <h1 className="mikiri-title">
-          <span className="mikiri-title-main">刹那ノ見切</span>
-          <span className="mikiri-title-sub">― 心眼を以て起こりを断つ ―</span>
+          <span className="mikiri-title-main">⚔️ 刹那ノ見切 ⚔️</span>
+          <span className="mikiri-title-sub">🔥 相手の動きを見ぬけ！ 🔥</span>
         </h1>
-        <div className="mikiri-counter" aria-label="本日の対戦数">
+        <div className="mikiri-counter" aria-label="きょうの挑戦回数">
           <span className="counter-num">{pad2(matchCount)}</span>
           <span className="counter-sep">/</span>
           <span className="counter-max">{pad2(MAX_MATCHES_PER_DAY)}</span>
@@ -660,13 +678,10 @@ export default function StudentMiniGamePage() {
         {phase === 'loading' && (
           <div className="overlay">
             <div className="console-box">
-              <div className="console-prompt">
-                <Swords size={14} />
-                <span>精神統一</span>
-              </div>
+              <div className="console-prompt">🧘 精神とういつ中…</div>
               <div className="loading-row">
                 <Loader2 size={20} className="animate-spin" />
-                <span className="loading-text">気を練っております<span className="dots">...</span></span>
+                <span className="loading-text">じゅんびしてるよ<span className="dots">...</span></span>
               </div>
             </div>
           </div>
@@ -675,15 +690,10 @@ export default function StudentMiniGamePage() {
         {phase === 'error' && (
           <div className="overlay">
             <div className="console-box console-box--error">
-              <div className="console-prompt console-prompt--error">
-                <AlertTriangle size={14} />
-                <span>不覚</span>
-              </div>
-              <p className="console-msg">{errorMessage || '道場との縁が結べませんでした'}</p>
+              <div className="console-prompt console-prompt--error">😣 ざんねん…！</div>
+              <p className="console-msg">{errorMessage || 'どうじょうとつながれなかったみたい💦'}</p>
               <button className="cyber-btn cyber-btn--danger" onClick={() => window.location.reload()} type="button">
-                <span className="cyber-btn-bracket">【</span>
-                <span className="cyber-btn-label">再び挑む</span>
-                <span className="cyber-btn-bracket">】</span>
+                🔄 もういちど挑戦！
               </button>
             </div>
           </div>
@@ -695,23 +705,18 @@ export default function StudentMiniGamePage() {
             <div className="console-box console-box--menu">
               <div className="kanji-watermark" aria-hidden="true">見切</div>
 
-              <div className="console-prompt">
-                <Swords size={14} />
-                <span>道場 ・ 修練の間</span>
-                <span className="prompt-blink">_</span>
-              </div>
+              <div className="console-prompt">🥋 どうじょう・とっくん部屋</div>
 
               <div className="menu-header">
-                <h2 className="menu-title-jp-main">刹那ノ見切</h2>
-                <p className="menu-title-jp-sub">― 起こりを見切り、一本を取れ ―</p>
+                <h2 className="menu-title-jp-main">⚔️ 刹那ノ見切 ⚔️</h2>
+                <p className="menu-title-jp-sub">🔥 相手の「起こり」を見切って一本！ 🔥</p>
               </div>
 
               <div className="menu-sep" />
 
               {phase === 'locked' ? (
                 <div className="menu-locked">
-                  <AlertTriangle size={16} />
-                  <span>本日の修練は終了 ・ 明日また参られよ</span>
+                  🌙 きょうの特訓はおしまい！<br />また明日チャレンジしようね！✨
                 </div>
               ) : (
                 <button
@@ -720,10 +725,7 @@ export default function StudentMiniGamePage() {
                   type="button"
                   disabled={matchCount >= MAX_MATCHES_PER_DAY}
                 >
-                  <span className="cyber-btn-icon"><Swords size={16} /></span>
-                  <span className="cyber-btn-bracket">【</span>
-                  <span className="cyber-btn-label">立ち合い開始</span>
-                  <span className="cyber-btn-bracket">】</span>
+                  ⚔️ 立ち合いスタート！ 🔥
                 </button>
               )}
 
@@ -732,10 +734,7 @@ export default function StudentMiniGamePage() {
                 onClick={openRanking}
                 type="button"
               >
-                <span className="cyber-btn-icon"><Trophy size={16} /></span>
-                <span className="cyber-btn-bracket">【</span>
-                <span className="cyber-btn-label">見切りランキング</span>
-                <span className="cyber-btn-bracket">】</span>
+                🏆 見切りランキングを見る
               </button>
 
               <button
@@ -743,16 +742,13 @@ export default function StudentMiniGamePage() {
                 onClick={() => setViewState('records')}
                 type="button"
               >
-                <span className="cyber-btn-icon"><BookOpen size={16} /></span>
-                <span className="cyber-btn-bracket">【</span>
-                <span className="cyber-btn-label">修練の記録</span>
-                <span className="cyber-btn-bracket">】</span>
+                📖 じぶんの記録を見る
               </button>
 
               <div className="menu-stat-line">
-                <span className="stat-key">残りの立ち合い</span>
+                <span className="stat-key">💪 のこり挑戦</span>
                 <span className="stat-sep">：</span>
-                <span className="stat-val">{pad2(remainingQuota)} 本</span>
+                <span className="stat-val">あと {pad2(remainingQuota)} 回！</span>
               </div>
             </div>
           </div>
@@ -764,71 +760,58 @@ export default function StudentMiniGamePage() {
             <div className="console-box console-box--records">
               <div className="kanji-watermark" aria-hidden="true">記録</div>
 
-              <div className="console-prompt">
-                <BookOpen size={14} />
-                <span>修練の記録</span>
-                <span className="prompt-blink">_</span>
-              </div>
+              <div className="console-prompt">📖 じぶんの修行きろく</div>
 
               <div className="menu-header menu-header--records">
-                <h2 className="menu-title-jp-main">修練の記録</h2>
-                <p className="menu-title-jp-sub">― これまでの歩み ―</p>
+                <h2 className="menu-title-jp-main">📖 修行きろく</h2>
+                <p className="menu-title-jp-sub">✨ これまでのがんばり ✨</p>
               </div>
 
               <div className="menu-sep" />
 
               <div className="data-row">
-                <span className="data-key">{'》'} 最速の見切り</span>
+                <span className="data-key">⚡ 自己ベスト</span>
                 <span className="data-val">
-                  <Trophy size={14} />
-                  {bestTimeMs !== null ? formatTime(bestTimeMs) : '---.---'}
+                  🏆 {bestTimeMs !== null ? formatTime(bestTimeMs) : '---.---'}
                 </span>
               </div>
 
               <div className="data-row">
-                <span className="data-key">{'》'} 本日の立ち合い</span>
-                <span className="data-val">{pad2(matchCount)} / {pad2(MAX_MATCHES_PER_DAY)}</span>
+                <span className="data-key">⚔️ きょうの挑戦</span>
+                <span className="data-val">{pad2(matchCount)} / {pad2(MAX_MATCHES_PER_DAY)} 回</span>
               </div>
 
               <div className="data-row">
-                <span className="data-key">{'》'} 残りの立ち合い</span>
-                <span className="data-val">{pad2(remainingQuota)} 本</span>
+                <span className="data-key">💪 のこり挑戦</span>
+                <span className="data-val">あと {pad2(remainingQuota)} 回</span>
               </div>
 
               {statusInfo?.locked && (
                 <div className="locked-bar">
-                  <AlertTriangle size={14} />
-                  <span>本日の修練は終了 ・ 明日また参られよ</span>
+                  🌙 きょうの特訓はおしまい！また明日ね✨
                 </div>
               )}
 
               <div className="menu-sep" />
 
               <button className="cyber-btn cyber-btn--secondary" onClick={handleBackToMenu} type="button">
-                <span className="cyber-btn-icon"><ArrowLeft size={16} /></span>
-                <span className="cyber-btn-bracket">【</span>
-                <span className="cyber-btn-label">道場へ戻る</span>
-                <span className="cyber-btn-bracket">】</span>
+                ⬅️ メニューにもどる
               </button>
             </div>
           </div>
         )}
 
-        {/* ============ ★ ランキング画面 ============ */}
+        {/* ============ ★ ランキング画面（グラフ付き） ============ */}
         {viewState === 'ranking' && (
           <div className="overlay">
             <div className="console-box console-box--ranking">
               <div className="kanji-watermark" aria-hidden="true">頂</div>
 
-              <div className="console-prompt">
-                <Crown size={14} />
-                <span>見切りランキング</span>
-                <span className="prompt-blink">_</span>
-              </div>
+              <div className="console-prompt">🏆 道場ナンバーワン決定戦！</div>
 
               <div className="menu-header menu-header--records">
-                <h2 className="menu-title-jp-main">頂の見切り</h2>
-                <p className="menu-title-jp-sub">― 道場最速 ・ 上位十名 ―</p>
+                <h2 className="menu-title-jp-main">🏆 見切りランキング</h2>
+                <p className="menu-title-jp-sub">⚡ 道場最速はだれだ！？ ⚡</p>
               </div>
 
               <div className="menu-sep" />
@@ -836,57 +819,60 @@ export default function StudentMiniGamePage() {
               {rankingLoading && (
                 <div className="loading-row" style={{ justifyContent: 'center' }}>
                   <Loader2 size={20} className="animate-spin" />
-                  <span className="loading-text">番付を取り寄せ中<span className="dots">...</span></span>
+                  <span className="loading-text">番付をとりよせ中<span className="dots">...</span></span>
                 </div>
               )}
 
               {!rankingLoading && rankingError && (
-                <p className="summary-error">※ 取得に失敗: {rankingError}</p>
+                <p className="summary-error">😣 とりこみ失敗: {rankingError}</p>
               )}
 
-              {!rankingLoading && !rankingError && ranking.length === 0 && (
+              {!rankingLoading && !rankingError && ranking && ranking.top.length === 0 && (
                 <p className="console-msg" style={{ textAlign: 'center' }}>
-                  まだ記録がありませぬ。<br />一番乗りを目指されよ。
+                  📭 まだだれも記録してないよ！<br />🥇 いちばん乗りをめざせ！🔥
                 </p>
               )}
 
-              {!rankingLoading && !rankingError && ranking.length > 0 && (
-                <div className="ranking-list">
-                  {ranking.map((entry, i) => {
-                    const rankNo = i + 1;
-                    const medalClass =
-                      rankNo === 1 ? 'rank-gold'
-                      : rankNo === 2 ? 'rank-silver'
-                      : rankNo === 3 ? 'rank-bronze'
-                      : '';
-                    return (
-                      <div key={entry.userId} className={`ranking-row ${medalClass}`}>
-                        <span className="ranking-no">
-                          {rankNo <= 3 ? <Crown size={14} /> : null}
-                          {pad2(rankNo)}
-                        </span>
-                        <span className="ranking-name">{entry.name}</span>
-                        <span className="ranking-time">{formatTime(entry.bestTimeMs)}</span>
-                      </div>
-                    );
-                  })}
-                </div>
+              {!rankingLoading && !rankingError && ranking && ranking.top.length > 0 && (
+                <>
+                  {/* ★ 推移グラフ */}
+                  <RankingChart history={ranking.history} />
+
+                  {/* ★ TOP10リスト */}
+                  <p className="chart-caption" style={{ marginTop: 14 }}>🥇 ベストタイム TOP10</p>
+                  <div className="ranking-list">
+                    {ranking.top.map((entry, i) => {
+                      const rankNo = i + 1;
+                      const medal =
+                        rankNo === 1 ? '🥇'
+                        : rankNo === 2 ? '🥈'
+                        : rankNo === 3 ? '🥉'
+                        : '🔸';
+                      const medalClass =
+                        rankNo === 1 ? 'rank-gold'
+                        : rankNo === 2 ? 'rank-silver'
+                        : rankNo === 3 ? 'rank-bronze'
+                        : '';
+                      return (
+                        <div key={entry.userId} className={`ranking-row ${medalClass}`}>
+                          <span className="ranking-no">{medal}{pad2(rankNo)}</span>
+                          <span className="ranking-name">{entry.name}</span>
+                          <span className="ranking-time">💨 {formatTime(entry.bestTimeMs)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
               )}
 
               <div className="menu-sep" />
 
               <button className="cyber-btn cyber-btn--gold" onClick={loadRanking} type="button" disabled={rankingLoading}>
-                <span className="cyber-btn-icon"><Loader2 size={16} className={rankingLoading ? 'animate-spin' : ''} /></span>
-                <span className="cyber-btn-bracket">【</span>
-                <span className="cyber-btn-label">番付を更新</span>
-                <span className="cyber-btn-bracket">】</span>
+                🔄 番付をこうしん
               </button>
 
               <button className="cyber-btn cyber-btn--secondary" onClick={handleBackToMenu} type="button">
-                <span className="cyber-btn-icon"><ArrowLeft size={16} /></span>
-                <span className="cyber-btn-bracket">【</span>
-                <span className="cyber-btn-label">道場へ戻る</span>
-                <span className="cyber-btn-bracket">】</span>
+                ⬅️ メニューにもどる
               </button>
             </div>
           </div>
@@ -895,29 +881,24 @@ export default function StudentMiniGamePage() {
         {/* ============ プレイ画面 ============ */}
         {viewState === 'playing' && phase === 'waiting' && (
           <div className="overlay overlay--passive">
-            <p className="overlay-msg">― 構 え ―</p>
-            <p className="overlay-round">第 {pad2(roundIdx + 1)} 本 / 全 {pad2(ROUNDS_PER_MATCH)} 本</p>
+            <p className="overlay-msg">🥋 かまえて…！</p>
+            <p className="overlay-round">{pad2(roundIdx + 1)} 本め / 全 {pad2(ROUNDS_PER_MATCH)} 本</p>
           </div>
         )}
 
-        {/* pre_okori（間合い）は意図的に何も表示せず、剣士の佇まいで静寂を演出 */}
-
         {viewState === 'playing' && phase === 'okori' && (
           <div className="overlay overlay--passive overlay--okori">
-            <p className="overlay-okori-msg">― 来 る ―</p>
+            <p className="overlay-okori-msg">⚡ いまだ！⚡</p>
           </div>
         )}
 
         {phase === 'submitting' && (
           <div className="overlay">
             <div className="console-box">
-              <div className="console-prompt">
-                <Swords size={14} />
-                <span>奉納</span>
-              </div>
+              <div className="console-prompt">📝 記録中…🔥</div>
               <div className="loading-row">
                 <Loader2 size={20} className="animate-spin" />
-                <span className="loading-text">戦果を記しております<span className="dots">...</span></span>
+                <span className="loading-text">けっか をきろく中<span className="dots">...</span></span>
               </div>
             </div>
           </div>
@@ -928,47 +909,46 @@ export default function StudentMiniGamePage() {
             <div className="console-box console-box--result">
               <div className="kanji-watermark" aria-hidden="true">結果</div>
 
-              <div className="console-prompt">
-                <Swords size={14} />
-                <span>立ち合いの結果</span>
-              </div>
+              <div className="console-prompt">🎌 立ち合いの けっか！</div>
 
-              <h2 className="result-title">― 勝 負 あ り ―</h2>
+              <h2 className="result-title">⚔️ しょうぶあり！ ⚔️</h2>
 
               <div className={`rank-display rank-${overallRank}`}>
-                <span className="rank-label">技 の 位</span>
+                <span className="rank-label">きみの位は…</span>
                 <span className="rank-value">{overallRank}</span>
               </div>
 
+              <p className="rank-cheer">{rankCheer(overallRank)}</p>
+
               <div className="data-row">
-                <span className="data-key">{'》'} 一本数</span>
-                <span className="data-val">{successCount} / {ROUNDS_PER_MATCH}</span>
+                <span className="data-key">⚔️ 一本数</span>
+                <span className="data-val">{successCount} / {ROUNDS_PER_MATCH} 本</span>
               </div>
               <div className="data-row">
-                <span className="data-key">{'》'} 平均見切り</span>
+                <span className="data-key">💨 平均タイム</span>
                 <span className="data-val">{formatTime(averageReaction)}</span>
               </div>
 
               {lastSaveResult && (
                 <div className="data-row data-row--xp">
-                  <span className="data-key">{'》'} 獲得経験値</span>
-                  <span className="data-val xp-val">+{lastSaveResult.earnedXp}</span>
+                  <span className="data-key">✨ ゲットXP</span>
+                  <span className="data-val xp-val">+{lastSaveResult.earnedXp} 🔥</span>
                 </div>
               )}
               {lastSaveResult?.leveledUp && (
                 <div className="levelup-banner">
-                  ★ 昇格! Lv.{lastSaveResult.level} ★
+                  🎉 レベルアップ！ Lv.{lastSaveResult.level} になったぞ！🎉
                 </div>
               )}
               {!lastSaveResult && errorMessage && (
-                <p className="summary-error">※ 記録に失敗: {errorMessage}</p>
+                <p className="summary-error">😣 きろく失敗: {errorMessage}</p>
               )}
 
               <div className="summary-rounds">
                 {results.map((r, i) => (
                   <div key={i} className={`summary-round ${r.success ? 'ok' : 'ng'}`}>
-                    <span>第{i + 1}本</span>
-                    <span className="round-name">{r.success ? r.cutinText.replace('!', '').replace('...', '') : r.failLabel}</span>
+                    <span>{i + 1}本め</span>
+                    <span className="round-name">{r.success ? r.cutinText.replace(/[!！🔥⚡✨💯💥👏⚔️💨👍😅💦🌀👌]/g, '') : r.failLabel}</span>
                     <span className={`summary-rank rank-${r.rank}-tag`}>{r.rank}</span>
                     <span>{formatTime(r.reactionMs)}</span>
                   </div>
@@ -978,27 +958,19 @@ export default function StudentMiniGamePage() {
               {matchCount < MAX_MATCHES_PER_DAY ? (
                 <>
                   <button className="cyber-btn cyber-btn--primary" onClick={startMatch} type="button">
-                    <span className="cyber-btn-icon"><Swords size={16} /></span>
-                    <span className="cyber-btn-bracket">【</span>
-                    <span className="cyber-btn-label">次の立ち合い（{pad2(matchCount)}/{pad2(MAX_MATCHES_PER_DAY)}）</span>
-                    <span className="cyber-btn-bracket">】</span>
+                    🔥 もう一本！（あと{pad2(remainingQuota)}回）
                   </button>
                   <button className="cyber-btn cyber-btn--secondary" onClick={handleBackToMenu} type="button">
-                    <span className="cyber-btn-bracket">【</span>
-                    <span className="cyber-btn-label">道場へ戻る</span>
-                    <span className="cyber-btn-bracket">】</span>
+                    ⬅️ メニューにもどる
                   </button>
                 </>
               ) : (
                 <>
                   <div className="locked-bar">
-                    <AlertTriangle size={14} />
-                    <span>本日の修練は終了</span>
+                    🌙 きょうの特訓はここまで！おつかれさま✨
                   </div>
                   <button className="cyber-btn cyber-btn--secondary" onClick={handleBackToMenu} type="button">
-                    <span className="cyber-btn-bracket">【</span>
-                    <span className="cyber-btn-label">道場へ戻る</span>
-                    <span className="cyber-btn-bracket">】</span>
+                    ⬅️ メニューにもどる
                   </button>
                 </>
               )}
@@ -1009,22 +981,17 @@ export default function StudentMiniGamePage() {
         {phase === 'locked' && viewState === 'playing' && (
           <div className="overlay">
             <div className="console-box console-box--error">
-              <div className="console-prompt console-prompt--error">
-                <AlertTriangle size={14} />
-                <span>修練終了</span>
-              </div>
-              <h2 className="result-title">― 本日 ・ 打ち止め ―</h2>
-              <p className="console-msg">一日 五本 までと定めあり ・ 明日また参られよ</p>
+              <div className="console-prompt console-prompt--error">🌙 きょうはここまで！</div>
+              <h2 className="result-title">⭐ また明日！ ⭐</h2>
+              <p className="console-msg">今日の特別稽古はここまで！<br />また明日挑戦しようぜ！🔥</p>
               {bestTimeMs !== null && (
                 <div className="data-row" style={{ marginTop: 12 }}>
-                  <span className="data-key">{'》'} 最速の見切り</span>
-                  <span className="data-val"><Trophy size={14} /> {formatTime(bestTimeMs)}</span>
+                  <span className="data-key">⚡ 自己ベスト</span>
+                  <span className="data-val">🏆 {formatTime(bestTimeMs)}</span>
                 </div>
               )}
               <button className="cyber-btn cyber-btn--secondary" onClick={handleBackToMenu} type="button" style={{ marginTop: 14 }}>
-                <span className="cyber-btn-bracket">【</span>
-                <span className="cyber-btn-label">道場へ戻る</span>
-                <span className="cyber-btn-bracket">】</span>
+                ⬅️ メニューにもどる
               </button>
             </div>
           </div>
@@ -1032,15 +999,17 @@ export default function StudentMiniGamePage() {
       </main>
 
       {/* ===================================================================
-          styled-jsx: 熱血ダーク和風（漆黒 × 臙脂 × ゴールド）
+          styled-jsx: 熱血ポップ和風（温かみ臙脂 × ゴールド）🔥
       =================================================================== */}
       <style jsx>{`
         .mikiri-root {
           position: fixed; inset: 0;
-          background: #0a0606;
+          /* ★ 温かみのある暗い臙脂ベース（漆黒すぎない） */
+          background:
+            radial-gradient(circle at 50% 0%, #4a1a1a 0%, #2e1212 45%, #1f0d0d 100%);
           color: #f5e6c8;
           overflow: hidden;
-          font-family: 'Noto Serif JP', 'Yu Mincho', 'Hiragino Mincho ProN', serif;
+          font-family: 'Noto Sans JP', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', sans-serif;
           display: flex; flex-direction: column;
         }
         .mikiri-root[data-shake='on'] {
@@ -1059,7 +1028,6 @@ export default function StudentMiniGamePage() {
           90% { transform: translate(-1px, 0); }
         }
 
-        /* ★ Loader2 の回転（Tailwind 非依存） */
         :global(.animate-spin) {
           animation: spin 1s linear infinite;
         }
@@ -1072,25 +1040,14 @@ export default function StudentMiniGamePage() {
         .mikiri-grid {
           position: absolute; inset: 0;
           background-image:
-            linear-gradient(rgba(178, 34, 34, 0.05) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(178, 34, 34, 0.05) 1px, transparent 1px);
+            linear-gradient(rgba(255, 215, 0, 0.05) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(255, 215, 0, 0.05) 1px, transparent 1px);
           background-size: 44px 44px;
-          mask-image: radial-gradient(ellipse at center, black 35%, transparent 78%);
+          mask-image: radial-gradient(ellipse at center, black 40%, transparent 85%);
         }
-        .mikiri-scan {
+        .mikiri-glow {
           position: absolute; inset: 0;
-          background: linear-gradient(180deg, transparent 0%, rgba(178, 34, 34, 0.04) 50%, transparent 100%);
-          background-size: 100% 10px;
-          animation: scanMove 7s linear infinite;
-          opacity: 0.55;
-        }
-        @keyframes scanMove {
-          from { background-position: 0 0; }
-          to   { background-position: 0 100%; }
-        }
-        .mikiri-vignette {
-          position: absolute; inset: 0;
-          background: radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,0.7) 100%);
+          background: radial-gradient(ellipse at 50% 30%, rgba(255, 120, 60, 0.12) 0%, transparent 60%);
         }
 
         /* ===== ヘッダー ===== */
@@ -1098,48 +1055,49 @@ export default function StudentMiniGamePage() {
           position: relative; z-index: 2;
           display: flex; align-items: center; justify-content: space-between;
           padding: 12px 16px 10px;
-          border-bottom: 1px solid rgba(178, 34, 34, 0.35);
+          border-bottom: 2px solid rgba(255, 215, 0, 0.4);
           backdrop-filter: blur(6px);
-          background: linear-gradient(180deg, rgba(26, 10, 10, 0.7), rgba(10, 6, 6, 0.5));
+          background: linear-gradient(180deg, rgba(74, 26, 26, 0.85), rgba(46, 18, 18, 0.6));
         }
         .mikiri-back {
-          color: #FFD700; padding: 6px;
-          background: transparent; border: 1px solid rgba(255, 215, 0, 0.3);
+          color: #FFD700; padding: 7px;
+          background: rgba(178, 34, 34, 0.3); border: 2px solid rgba(255, 215, 0, 0.4);
           cursor: pointer; transition: all 0.2s;
           display: inline-flex; align-items: center;
-          border-radius: 0;
+          border-radius: 10px;
         }
         .mikiri-back:hover {
-          background: rgba(178, 34, 34, 0.18);
+          background: rgba(178, 34, 34, 0.5);
           border-color: #FFD700;
-          box-shadow: 0 0 12px rgba(255, 215, 0, 0.4);
+          box-shadow: 0 0 12px rgba(255, 215, 0, 0.5);
+          transform: scale(1.05);
         }
         .mikiri-title { text-align: center; line-height: 1; margin: 0; }
         .mikiri-title-main {
           display: block;
-          font-size: 17px; font-weight: 700;
-          letter-spacing: 0.28em;
-          color: #f5e6c8;
-          text-shadow: 0 0 14px rgba(255, 215, 0, 0.5), 0 1px 2px #000;
+          font-size: 16px; font-weight: 900;
+          letter-spacing: 0.08em;
+          color: #fff;
+          text-shadow: 0 0 14px rgba(255, 215, 0, 0.7), 0 2px 2px #000;
         }
         .mikiri-title-sub {
-          display: block; font-size: 9px;
-          letter-spacing: 0.22em;
-          color: #c9a96a; margin-top: 6px;
-          opacity: 0.85;
+          display: block; font-size: 10px;
+          letter-spacing: 0.05em;
+          color: #ffd97a; margin-top: 5px;
+          font-weight: 700;
         }
         .mikiri-counter {
-          font-size: 15px;
+          font-size: 16px; font-weight: 900;
           color: #FFD700;
-          background: rgba(178, 34, 34, 0.12);
-          border: 1px solid rgba(255, 215, 0, 0.35);
-          border-radius: 0;
+          background: rgba(178, 34, 34, 0.35);
+          border: 2px solid rgba(255, 215, 0, 0.5);
+          border-radius: 12px;
           padding: 4px 12px;
-          letter-spacing: 0.1em;
+          letter-spacing: 0.05em;
         }
-        .counter-num { color: #fbbf24; font-weight: 700; }
-        .counter-sep { color: #8B0000; margin: 0 3px; }
-        .counter-max { color: #c9a96a; }
+        .counter-num { color: #ffe97a; }
+        .counter-sep { color: #ff9b8b; margin: 0 3px; }
+        .counter-max { color: #ffcf8a; }
 
         .mikiri-stage {
           position: relative; z-index: 1; flex: 1;
@@ -1151,7 +1109,7 @@ export default function StudentMiniGamePage() {
           width: min(80vw, 360px);
           aspect-ratio: 3 / 5;
           transform-origin: center center;
-          filter: drop-shadow(0 0 12px rgba(255, 215, 0, 0.35));
+          filter: drop-shadow(0 0 12px rgba(255, 215, 0, 0.4));
         }
 
         /* ===== okori 予備動作アニメ ===== */
@@ -1159,9 +1117,9 @@ export default function StudentMiniGamePage() {
           animation: kenshiOkori 0.7s cubic-bezier(0.55, 0, 0.6, 0.7) forwards;
         }
         @keyframes kenshiOkori {
-          0% { transform: translateY(0) scale(1); filter: drop-shadow(0 0 12px rgba(255, 215, 0, 0.35)); }
-          40% { transform: translateY(1.5px) scale(1.005); filter: drop-shadow(0 0 16px rgba(178, 34, 34, 0.5)); }
-          100% { transform: translateY(3px) scale(1.015); filter: drop-shadow(0 0 22px rgba(220, 40, 40, 0.65)); }
+          0% { transform: translateY(0) scale(1); filter: drop-shadow(0 0 12px rgba(255, 215, 0, 0.4)); }
+          40% { transform: translateY(1.5px) scale(1.005); filter: drop-shadow(0 0 16px rgba(255, 120, 60, 0.6)); }
+          100% { transform: translateY(3px) scale(1.015); filter: drop-shadow(0 0 22px rgba(255, 80, 60, 0.75)); }
         }
         :global(.kenshi-wrap.anim-okori .sword) {
           animation: swordOkori 0.7s cubic-bezier(0.55, 0, 0.6, 0.7) forwards;
@@ -1209,7 +1167,7 @@ export default function StudentMiniGamePage() {
           position: absolute; inset: 0;
           display: flex; align-items: center; justify-content: center;
           flex-direction: column; gap: 10px; z-index: 5;
-          background: radial-gradient(ellipse at center, rgba(10, 6, 6, 0.55) 0%, rgba(0, 0, 0, 0.88) 100%);
+          background: radial-gradient(ellipse at center, rgba(46, 18, 18, 0.55) 0%, rgba(20, 10, 10, 0.85) 100%);
           backdrop-filter: blur(3px);
           padding: 16px;
           overflow-y: auto;
@@ -1218,176 +1176,143 @@ export default function StudentMiniGamePage() {
           background: transparent; backdrop-filter: none; pointer-events: none;
         }
         .overlay--okori {
-          background: radial-gradient(ellipse at center, rgba(178, 34, 34, 0.22) 0%, transparent 70%);
+          background: radial-gradient(ellipse at center, rgba(255, 120, 60, 0.25) 0%, transparent 70%);
         }
         .overlay-msg {
-          font-size: 18px; letter-spacing: 0.4em; color: #FFD700; margin: 0;
-          text-shadow: 0 0 10px rgba(255, 215, 0, 0.5), 0 1px 2px #000;
-          font-weight: 700;
+          font-size: 22px; letter-spacing: 0.15em; color: #FFD700; margin: 0;
+          text-shadow: 0 0 12px rgba(255, 215, 0, 0.6), 0 2px 2px #000;
+          font-weight: 900;
         }
         .overlay-round {
-          font-size: 12px; color: #c9a96a; margin: 0;
-          letter-spacing: 0.2em;
+          font-size: 13px; color: #ffd97a; margin: 0;
+          letter-spacing: 0.1em; font-weight: 700;
         }
         .overlay-okori-msg {
-          font-size: 26px; letter-spacing: 0.5em;
-          color: #ff5544; margin: 0; font-weight: 900;
-          text-shadow: 0 0 16px rgba(220, 40, 40, 0.7), 0 2px 3px #000;
-          animation: okoriPulse 0.8s ease-in-out infinite;
+          font-size: 30px; letter-spacing: 0.2em;
+          color: #ffec6b; margin: 0; font-weight: 900;
+          text-shadow: 0 0 18px rgba(255, 180, 40, 0.9), 0 2px 3px #000;
+          animation: okoriPulse 0.7s ease-in-out infinite;
         }
         @keyframes okoriPulse {
-          0%, 100% { opacity: 0.75; transform: scale(1); }
-          50%      { opacity: 1;    transform: scale(1.06); }
+          0%, 100% { opacity: 0.85; transform: scale(1); }
+          50%      { opacity: 1;    transform: scale(1.12); }
         }
 
-        /* ===== 木札風コンソールボックス ===== */
+        /* ===== ポップなカードボックス ===== */
         .console-box {
           position: relative;
           background:
-            linear-gradient(135deg, rgba(40, 18, 18, 0.86) 0%, rgba(12, 6, 6, 0.92) 100%);
-          border: 1px solid rgba(255, 215, 0, 0.32);
-          padding: 24px 26px;
-          width: min(92vw, 420px);
-          backdrop-filter: blur(14px) saturate(130%);
-          -webkit-backdrop-filter: blur(14px) saturate(130%);
+            linear-gradient(135deg, rgba(90, 32, 32, 0.92) 0%, rgba(54, 22, 22, 0.95) 100%);
+          border: 3px solid rgba(255, 215, 0, 0.55);
+          padding: 22px 22px;
+          width: min(94vw, 440px);
+          max-height: 88vh;
+          overflow-y: auto;
+          backdrop-filter: blur(10px);
+          border-radius: 20px;
           box-shadow:
-            0 0 40px rgba(178, 34, 34, 0.2),
-            0 0 80px rgba(0, 0, 0, 0.6),
-            inset 0 0 60px rgba(80, 20, 20, 0.18),
-            inset 0 1px 0 rgba(245, 230, 200, 0.06);
-          overflow: hidden;
-        }
-        .console-box::before,
-        .console-box::after {
-          content: '';
-          position: absolute;
-          width: 16px; height: 16px;
-          border: 1px solid #FFD700;
-          opacity: 0.9;
-        }
-        .console-box::before {
-          top: -1px; left: -1px;
-          border-right: none; border-bottom: none;
-        }
-        .console-box::after {
-          bottom: -1px; right: -1px;
-          border-left: none; border-top: none;
+            0 8px 40px rgba(0, 0, 0, 0.5),
+            0 0 30px rgba(255, 180, 40, 0.25),
+            inset 0 1px 0 rgba(255, 240, 200, 0.15);
         }
 
-        .console-box--menu, .console-box--records, .console-box--result, .console-box--ranking {
-          min-width: 300px;
-        }
         .console-box--error {
-          border-color: rgba(220, 60, 60, 0.5);
-          box-shadow:
-            0 0 40px rgba(178, 34, 34, 0.3),
-            inset 0 0 60px rgba(120, 20, 20, 0.14);
-        }
-        .console-box--error::before, .console-box--error::after {
-          border-color: #ff7b6b;
+          border-color: rgba(255, 130, 110, 0.7);
         }
 
         .kanji-watermark {
           position: absolute;
-          right: -10px;
-          bottom: -30px;
-          font-size: 140px;
+          right: 4px;
+          bottom: -10px;
+          font-size: 120px;
           font-weight: 900;
-          color: rgba(178, 34, 34, 0.1);
-          letter-spacing: -0.05em;
+          color: rgba(255, 215, 0, 0.07);
           line-height: 0.85;
           pointer-events: none;
           user-select: none;
           writing-mode: vertical-rl;
-          text-shadow: 0 0 20px rgba(255, 215, 0, 0.05);
         }
 
         .console-prompt {
           display: inline-flex; align-items: center; gap: 6px;
-          font-size: 11px;
-          color: #FFD700;
-          letter-spacing: 0.2em;
-          padding: 3px 10px;
-          background: rgba(178, 34, 34, 0.14);
-          border-left: 3px solid #B22222;
+          font-size: 13px;
+          color: #1a0606;
+          letter-spacing: 0.05em;
+          padding: 5px 14px;
+          background: linear-gradient(135deg, #FFD700, #ffb347);
+          border-radius: 20px;
           margin-bottom: 14px;
-          font-weight: 700;
+          font-weight: 900;
+          box-shadow: 0 2px 8px rgba(255, 180, 40, 0.4);
         }
         .console-prompt--error {
-          color: #ff9b8b;
-          background: rgba(220, 60, 60, 0.12);
-          border-left-color: #ff7b6b;
-        }
-        .prompt-blink {
-          color: #FFD700;
-          animation: cursorBlink 1s step-end infinite;
-        }
-        @keyframes cursorBlink {
-          50% { opacity: 0; }
+          background: linear-gradient(135deg, #ff9b8b, #ff6b6b);
+          color: #fff;
         }
 
         /* ===== タイポグラフィ ===== */
         .menu-header {
-          margin: 4px 0 18px;
+          margin: 4px 0 16px;
           position: relative; z-index: 1;
         }
         .menu-header--records { margin-bottom: 14px; }
         .menu-title-jp-main {
           display: block;
           margin: 0;
-          font-size: clamp(30px, 8vw, 42px);
+          font-size: clamp(26px, 7vw, 36px);
           font-weight: 900;
-          letter-spacing: 0.12em;
-          color: #f5e6c8;
-          line-height: 1.1;
+          letter-spacing: 0.04em;
+          color: #fff;
+          line-height: 1.2;
           text-shadow:
-            0 0 18px rgba(255, 215, 0, 0.35),
-            0 0 36px rgba(178, 34, 34, 0.4),
-            0 2px 4px #000;
+            0 0 16px rgba(255, 215, 0, 0.5),
+            0 2px 0 #8B0000,
+            0 3px 6px rgba(0,0,0,0.5);
         }
         .menu-title-jp-sub {
-          margin: 12px 0 0;
-          font-size: 11px;
-          letter-spacing: 0.32em;
-          color: #c9a96a;
-          opacity: 0.85;
+          margin: 10px 0 0;
+          font-size: 12px;
+          letter-spacing: 0.06em;
+          color: #ffd97a;
+          font-weight: 700;
         }
 
         .menu-sep {
-          height: 1px;
+          height: 2px;
           background: linear-gradient(90deg,
             transparent,
-            rgba(255, 215, 0, 0.5) 20%,
-            rgba(178, 34, 34, 0.6) 50%,
-            rgba(255, 215, 0, 0.5) 80%,
+            rgba(255, 215, 0, 0.6) 20%,
+            rgba(255, 140, 60, 0.7) 50%,
+            rgba(255, 215, 0, 0.6) 80%,
             transparent);
-          margin: 14px 0 16px;
+          margin: 14px 0;
+          border-radius: 2px;
           position: relative; z-index: 1;
         }
 
         .menu-stat-line {
           margin-top: 16px;
-          padding: 8px 12px;
-          background: rgba(60, 20, 20, 0.5);
-          border-left: 3px solid #c9a96a;
-          display: flex; align-items: center; gap: 8px;
-          font-size: 12px;
-          letter-spacing: 0.15em;
+          padding: 10px 14px;
+          background: rgba(255, 215, 0, 0.12);
+          border: 2px dashed rgba(255, 215, 0, 0.4);
+          border-radius: 12px;
+          display: flex; align-items: center; gap: 6px; justify-content: center;
+          font-size: 14px; font-weight: 700;
           position: relative; z-index: 1;
         }
-        .stat-key { color: #c9a96a; }
-        .stat-sep { color: #8B0000; }
-        .stat-val { color: #fbbf24; font-weight: 700; }
+        .stat-key { color: #ffd97a; }
+        .stat-sep { color: #ff9b8b; }
+        .stat-val { color: #ffec6b; font-weight: 900; }
 
         .menu-locked {
-          display: flex; align-items: center; justify-content: center; gap: 8px;
-          color: #ffb04a;
-          font-size: 12px;
-          letter-spacing: 0.12em;
-          padding: 12px;
-          background: rgba(255, 176, 74, 0.08);
-          border: 1px solid rgba(255, 176, 74, 0.32);
-          border-left: 3px solid #ffb04a;
+          text-align: center;
+          color: #ffd97a;
+          font-size: 14px; font-weight: 700;
+          line-height: 1.7;
+          padding: 16px;
+          background: rgba(255, 176, 74, 0.12);
+          border: 2px dashed rgba(255, 176, 74, 0.5);
+          border-radius: 14px;
           margin: 4px 0;
           position: relative; z-index: 1;
         }
@@ -1395,245 +1320,206 @@ export default function StudentMiniGamePage() {
         /* ===== データ行 ===== */
         .data-row {
           display: flex; justify-content: space-between; align-items: center;
-          padding: 8px 12px;
-          margin: 4px 0;
-          background: rgba(60, 20, 20, 0.42);
-          border-left: 3px solid rgba(255, 215, 0, 0.45);
-          font-size: 13px;
-          letter-spacing: 0.08em;
+          padding: 10px 14px;
+          margin: 6px 0;
+          background: rgba(255, 215, 0, 0.08);
+          border-radius: 12px;
+          border: 1px solid rgba(255, 215, 0, 0.25);
+          font-size: 14px; font-weight: 700;
           position: relative; z-index: 1;
-          transition: all 0.2s;
         }
-        .data-row:hover {
-          background: rgba(90, 28, 28, 0.5);
-          border-left-color: #FFD700;
-        }
-        .data-key { color: #FFD700; }
+        .data-key { color: #ffd97a; }
         .data-val {
           display: inline-flex; align-items: center; gap: 6px;
-          color: #fff; font-weight: 700;
+          color: #fff; font-weight: 900;
         }
         .data-row--xp {
-          background: rgba(255, 215, 0, 0.1);
-          border-left-color: #fbbf24;
-          margin-top: 10px;
+          background: linear-gradient(135deg, rgba(255, 215, 0, 0.2), rgba(255, 140, 60, 0.15));
+          border-color: rgba(255, 215, 0, 0.6);
+          margin-top: 12px;
         }
-        .data-row--xp .data-key { color: #fbbf24; }
+        .data-row--xp .data-key { color: #ffec6b; }
         .xp-val {
-          color: #fbbf24 !important;
-          font-size: 20px !important;
-          text-shadow: 0 0 12px rgba(251, 191, 36, 0.7);
+          color: #ffec6b !important;
+          font-size: 22px !important;
+          text-shadow: 0 0 12px rgba(255, 200, 60, 0.8);
         }
 
         .levelup-banner {
-          margin: 10px 0 4px;
-          padding: 8px 12px;
+          margin: 12px 0 4px;
+          padding: 12px;
           text-align: center;
           font-weight: 900;
-          font-size: 14px;
-          letter-spacing: 0.15em;
+          font-size: 15px;
           color: #1a0606;
-          background: linear-gradient(135deg, #fbbf24, #FFD700);
-          box-shadow: 0 0 18px rgba(251, 191, 36, 0.6);
-          animation: levelupPulse 0.8s ease-in-out infinite;
+          background: linear-gradient(135deg, #ffec6b, #ffb347);
+          border-radius: 14px;
+          box-shadow: 0 0 22px rgba(255, 200, 60, 0.7);
+          animation: levelupPulse 0.7s ease-in-out infinite;
         }
         @keyframes levelupPulse {
-          0%, 100% { transform: scale(1); }
-          50% { transform: scale(1.03); }
+          0%, 100% { transform: scale(1) rotate(-1deg); }
+          50% { transform: scale(1.05) rotate(1deg); }
         }
 
         .locked-bar {
-          display: flex; align-items: center; justify-content: center; gap: 6px;
-          margin: 12px 0 0; padding: 8px 12px;
-          color: #ffb04a;
-          font-size: 11px; letter-spacing: 0.15em;
-          background: rgba(255, 176, 74, 0.08);
-          border: 1px solid rgba(255, 176, 74, 0.32);
-          border-left: 3px solid #ffb04a;
+          text-align: center;
+          margin: 12px 0 0; padding: 12px;
+          color: #ffd97a; font-weight: 700;
+          font-size: 13px; line-height: 1.6;
+          background: rgba(255, 176, 74, 0.12);
+          border: 2px dashed rgba(255, 176, 74, 0.5);
+          border-radius: 14px;
+        }
+
+        /* ===== ★ グラフ ===== */
+        .chart-wrap {
+          margin: 4px 0 6px;
+          position: relative; z-index: 1;
+        }
+        .chart-caption {
+          font-size: 13px; font-weight: 900; color: #ffd97a;
+          margin: 0 0 8px; text-align: center;
+        }
+        .chart-box {
+          background: rgba(20, 10, 10, 0.5);
+          border: 1px solid rgba(255, 215, 0, 0.25);
+          border-radius: 14px;
+          padding: 8px 6px 4px;
+        }
+        .chart-empty {
+          text-align: center; color: #ffd97a;
+          font-size: 13px; font-weight: 700; line-height: 1.8;
+          padding: 16px;
         }
 
         /* ===== ★ ランキングリスト ===== */
         .ranking-list {
-          display: flex; flex-direction: column; gap: 5px;
-          margin: 4px 0;
+          display: flex; flex-direction: column; gap: 6px;
+          margin: 8px 0 4px;
           position: relative; z-index: 1;
         }
         .ranking-row {
           display: grid;
-          grid-template-columns: 48px 1fr auto;
-          gap: 10px;
+          grid-template-columns: 60px 1fr auto;
+          gap: 8px;
           align-items: center;
-          padding: 8px 12px;
-          background: rgba(60, 20, 20, 0.4);
-          border-left: 3px solid rgba(201, 169, 106, 0.4);
-          font-size: 13px;
-          transition: all 0.2s;
-        }
-        .ranking-row:hover {
-          background: rgba(90, 28, 28, 0.5);
+          padding: 9px 12px;
+          background: rgba(255, 215, 0, 0.07);
+          border-radius: 12px;
+          border: 1px solid rgba(255, 215, 0, 0.2);
+          font-size: 14px; font-weight: 700;
         }
         .ranking-no {
-          display: inline-flex; align-items: center; gap: 4px;
           font-weight: 900;
-          color: #c9a96a;
-          letter-spacing: 0.05em;
+          color: #ffd97a;
+          font-size: 13px;
         }
         .ranking-name {
-          color: #f5e6c8;
-          font-weight: 700;
+          color: #fff;
+          font-weight: 900;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
         }
         .ranking-time {
-          color: #fbbf24;
-          font-weight: 700;
+          color: #ffec6b;
+          font-weight: 900;
           text-align: right;
-          letter-spacing: 0.03em;
         }
         .ranking-row.rank-gold {
-          border-left-color: #FFD700;
-          background: linear-gradient(135deg, rgba(255, 215, 0, 0.14), rgba(60, 20, 20, 0.5));
+          background: linear-gradient(135deg, rgba(255, 215, 0, 0.25), rgba(255, 140, 60, 0.12));
+          border-color: #FFD700;
+          box-shadow: 0 0 14px rgba(255, 200, 60, 0.3);
         }
-        .ranking-row.rank-gold .ranking-no { color: #FFD700; text-shadow: 0 0 10px rgba(255, 215, 0, 0.6); }
-        .ranking-row.rank-gold .ranking-name { color: #fff; }
         .ranking-row.rank-silver {
-          border-left-color: #d8d8e0;
-          background: linear-gradient(135deg, rgba(216, 216, 224, 0.1), rgba(60, 20, 20, 0.5));
+          background: linear-gradient(135deg, rgba(220, 220, 230, 0.15), rgba(90, 32, 32, 0.3));
+          border-color: #d8d8e0;
         }
-        .ranking-row.rank-silver .ranking-no { color: #d8d8e0; }
         .ranking-row.rank-bronze {
-          border-left-color: #cd7f32;
-          background: linear-gradient(135deg, rgba(205, 127, 50, 0.12), rgba(60, 20, 20, 0.5));
+          background: linear-gradient(135deg, rgba(205, 127, 50, 0.18), rgba(90, 32, 32, 0.3));
+          border-color: #e0975a;
         }
-        .ranking-row.rank-bronze .ranking-no { color: #e0975a; }
 
-        /* ===== 和風ボタン ===== */
+        /* ===== ポップなボタン ===== */
         .cyber-btn {
           position: relative;
-          display: flex; align-items: center; justify-content: center; gap: 8px;
+          display: flex; align-items: center; justify-content: center; gap: 6px;
           width: 100%;
-          padding: 14px 18px;
-          background: rgba(60, 20, 20, 0.6);
+          padding: 15px 18px;
+          background: rgba(178, 34, 34, 0.45);
           color: #FFD700;
-          border: 1px solid rgba(255, 215, 0, 0.38);
-          border-radius: 0;
-          font-family: 'Noto Serif JP', serif;
-          font-size: 14px;
-          font-weight: 700;
-          letter-spacing: 0.16em;
+          border: 2px solid rgba(255, 215, 0, 0.5);
+          border-radius: 16px;
+          font-family: inherit;
+          font-size: 15px;
+          font-weight: 900;
+          letter-spacing: 0.03em;
           cursor: pointer;
-          transition: all 0.25s cubic-bezier(0.2, 0.8, 0.4, 1);
-          margin-top: 8px;
-          overflow: hidden;
-          z-index: 1;
-        }
-        .cyber-btn::before {
-          content: '';
-          position: absolute;
-          left: 0; top: 0; bottom: 0;
-          width: 0;
-          background: linear-gradient(180deg, #fbbf24, #B22222);
-          transition: width 0.25s cubic-bezier(0.2, 0.8, 0.4, 1);
-          z-index: -1;
-          box-shadow: 0 0 20px rgba(255, 215, 0, 0.6);
-        }
-        .cyber-btn::after {
-          content: '';
-          position: absolute;
-          right: 0; top: 0; bottom: 0;
-          width: 1px;
-          background: rgba(255, 215, 0, 0.4);
-          transition: all 0.25s;
+          transition: all 0.18s ease;
+          margin-top: 10px;
         }
         .cyber-btn:hover {
-          color: #fff;
-          border-color: #fbbf24;
-          background: rgba(90, 28, 28, 0.65);
-          padding-left: 28px;
-          box-shadow:
-            0 0 22px rgba(178, 34, 34, 0.4),
-            inset 0 0 20px rgba(255, 215, 0, 0.08);
+          transform: translateY(-2px) scale(1.02);
+          box-shadow: 0 6px 20px rgba(255, 180, 40, 0.4);
         }
-        .cyber-btn:hover::before { width: 6px; }
-        .cyber-btn:hover::after {
-          width: 3px;
-          background: #fbbf24;
-          box-shadow: 0 0 12px #fbbf24;
-        }
-        .cyber-btn:active { transform: translateX(2px); }
+        .cyber-btn:active { transform: translateY(0) scale(0.98); }
         .cyber-btn:disabled {
-          background: rgba(40, 30, 30, 0.4);
-          color: #6b5b4b;
-          border-color: rgba(100, 80, 70, 0.4);
+          background: rgba(60, 50, 50, 0.4);
+          color: #8a7a6a;
+          border-color: rgba(120, 100, 90, 0.4);
           cursor: not-allowed;
-          opacity: 0.5;
+          transform: none; box-shadow: none;
+          opacity: 0.6;
         }
-        .cyber-btn:disabled:hover { padding-left: 18px; box-shadow: none; }
-        .cyber-btn:disabled::before { width: 0; }
 
         .cyber-btn--primary {
-          background: linear-gradient(135deg, rgba(139, 0, 0, 0.7), rgba(178, 34, 34, 0.6));
-          color: #fbbf24;
-          border-color: rgba(251, 191, 36, 0.55);
-          box-shadow: 0 0 18px rgba(178, 34, 34, 0.3);
-        }
-        .cyber-btn--primary::before { background: linear-gradient(180deg, #fbbf24, #FFD700); }
-        .cyber-btn--primary:hover {
+          background: linear-gradient(135deg, #e23c3c, #ff6b3c);
           color: #fff;
-          background: linear-gradient(135deg, rgba(178, 34, 34, 0.8), rgba(210, 50, 50, 0.7));
-          border-color: #fbbf24;
+          border-color: #ffd97a;
+          box-shadow: 0 4px 16px rgba(255, 80, 50, 0.4);
+          font-size: 17px;
+          padding: 17px 18px;
+        }
+        .cyber-btn--primary:hover {
+          background: linear-gradient(135deg, #ff4c4c, #ff7c4c);
         }
 
         .cyber-btn--gold {
-          background: linear-gradient(135deg, rgba(120, 90, 20, 0.55), rgba(80, 60, 15, 0.5));
-          color: #FFD700;
-          border-color: rgba(255, 215, 0, 0.5);
-        }
-        .cyber-btn--gold::before { background: linear-gradient(180deg, #FFD700, #fbbf24); }
-        .cyber-btn--gold:hover {
+          background: linear-gradient(135deg, #FFD700, #ffb347);
           color: #1a0606;
-          background: linear-gradient(135deg, rgba(255, 215, 0, 0.85), rgba(251, 191, 36, 0.8));
-          border-color: #FFD700;
-          text-shadow: none;
+          border-color: #fff3c4;
+          box-shadow: 0 4px 16px rgba(255, 200, 60, 0.4);
+        }
+        .cyber-btn--gold:hover {
+          background: linear-gradient(135deg, #ffe44d, #ffc14d);
         }
 
         .cyber-btn--secondary {
-          background: rgba(30, 14, 14, 0.55);
-          color: #c9a96a;
-          border-color: rgba(201, 169, 106, 0.38);
+          background: rgba(54, 22, 22, 0.6);
+          color: #ffd97a;
+          border-color: rgba(201, 169, 106, 0.5);
         }
-        .cyber-btn--secondary::before { background: linear-gradient(180deg, #c9a96a, #8a6f3a); }
-        .cyber-btn--secondary:hover { color: #fff; border-color: #c9a96a; }
+        .cyber-btn--secondary:hover {
+          background: rgba(74, 30, 30, 0.7);
+          color: #fff;
+        }
 
         .cyber-btn--danger {
-          color: #ff9b8b;
-          border-color: rgba(220, 60, 60, 0.5);
-        }
-        .cyber-btn--danger::before { background: linear-gradient(180deg, #ff5544, #8B0000); }
-        .cyber-btn--danger:hover {
+          background: linear-gradient(135deg, #ff6b6b, #ff9b8b);
           color: #fff;
-          border-color: #ff7b6b;
-          background: rgba(120, 25, 25, 0.5);
+          border-color: #ffd0c4;
         }
-
-        .cyber-btn-bracket { color: rgba(255, 215, 0, 0.55); font-weight: 400; }
-        .cyber-btn--primary .cyber-btn-bracket { color: rgba(251, 191, 36, 0.7); }
-        .cyber-btn--gold .cyber-btn-bracket { color: rgba(255, 215, 0, 0.7); }
-        .cyber-btn--secondary .cyber-btn-bracket { color: rgba(201, 169, 106, 0.55); }
-        .cyber-btn--danger .cyber-btn-bracket { color: rgba(255, 155, 139, 0.7); }
-        .cyber-btn-label { flex-shrink: 0; }
-        .cyber-btn-icon { display: inline-flex; align-items: center; margin-right: 4px; }
 
         /* ===== ローディング ===== */
         .loading-row {
           display: flex; align-items: center; gap: 12px;
           color: #FFD700;
-          font-size: 13px;
-          letter-spacing: 0.18em;
+          font-size: 14px; font-weight: 700;
+          letter-spacing: 0.05em;
           padding: 8px 0;
         }
-        .loading-text { color: #fbbf24; }
+        .loading-text { color: #ffd97a; }
         .dots {
           display: inline-block;
           animation: dotsBlink 1.4s steps(4, end) infinite;
@@ -1647,11 +1533,12 @@ export default function StudentMiniGamePage() {
         }
 
         .console-msg {
-          color: #c9a96a;
-          font-size: 12px;
-          letter-spacing: 0.08em;
+          color: #ffd97a;
+          font-size: 14px; font-weight: 700;
+          letter-spacing: 0.03em;
           margin: 8px 0 14px;
-          line-height: 1.7;
+          line-height: 1.8;
+          text-align: center;
         }
 
         /* ===== カットイン ===== */
@@ -1661,47 +1548,48 @@ export default function StudentMiniGamePage() {
           z-index: 10; pointer-events: none;
         }
         .cutin-text {
-          font-size: clamp(42px, 12vw, 82px);
+          font-size: clamp(34px, 10vw, 68px);
           font-weight: 900;
-          font-family: 'Noto Serif JP', serif;
-          letter-spacing: 0.05em;
+          font-family: inherit;
+          letter-spacing: 0.02em;
           padding: 0 12px;
+          text-align: center;
           animation: cutinAppear 1.5s cubic-bezier(0.2, 1.4, 0.4, 1) forwards;
           transform-origin: center center;
         }
         .cutin-S .cutin-text {
-          color: #fbbf24;
+          color: #ffec6b;
           text-shadow:
-            0 0 28px #fbbf24, 0 0 52px #FFD700,
-            4px 4px 0 #000, -2px -2px 0 #8B0000, 2px -2px 0 #8B0000, -2px 2px 0 #8B0000;
+            0 0 28px #ffec6b, 0 0 52px #ffb347,
+            3px 3px 0 #8B0000, -2px -2px 0 #8B0000;
         }
         .cutin-A .cutin-text {
           color: #FFD700;
           text-shadow:
-            0 0 26px #FFD700, 0 0 50px #B22222,
-            4px 4px 0 #000, -2px -2px 0 #8B0000, 2px -2px 0 #8B0000, -2px 2px 0 #8B0000;
+            0 0 24px #FFD700, 0 0 44px #ff8c3c,
+            3px 3px 0 #8B0000, -2px -2px 0 #8B0000;
         }
         .cutin-B .cutin-text, .cutin-C .cutin-text {
-          color: #f5e6c8;
+          color: #fff;
           text-shadow:
-            0 0 18px #c9a96a,
-            3px 3px 0 #000, -2px -2px 0 #8B0000, 2px -2px 0 #8B0000, -2px 2px 0 #8B0000;
+            0 0 18px #ffd97a,
+            3px 3px 0 #8B0000, -2px -2px 0 #8B0000;
         }
         .cutin-F .cutin-text {
-          color: #ff5544;
+          color: #ff8c7a;
           text-shadow:
-            0 0 20px #8B0000,
-            3px 3px 0 #000, -2px -2px 0 #2a1010, 2px -2px 0 #2a1010, -2px 2px 0 #2a1010;
+            0 0 18px #ff5544,
+            3px 3px 0 #2a1010, -2px -2px 0 #2a1010;
         }
         @keyframes cutinAppear {
-          0%   { transform: scale(0.2) rotate(-8deg); opacity: 0; letter-spacing: 0.5em; }
-          15%  { transform: scale(1.4) rotate(-4deg); opacity: 1; letter-spacing: 0.05em; }
+          0%   { transform: scale(0.2) rotate(-8deg); opacity: 0; }
+          15%  { transform: scale(1.4) rotate(-4deg); opacity: 1; }
           30%  { transform: scale(1.0) rotate(-2deg); }
           70%  { transform: scale(1.0) rotate(-2deg); opacity: 1; }
           100% { transform: scale(1.1) rotate(-2deg); opacity: 0; }
         }
 
-        /* ===== 斬撃エフェクト（黄金） ===== */
+        /* ===== 斬撃エフェクト ===== */
         .slash-fx {
           position: absolute; inset: -20%;
           z-index: 8; pointer-events: none;
@@ -1733,127 +1621,130 @@ export default function StudentMiniGamePage() {
         @keyframes flashGold { 0% { opacity: 1; } 100% { opacity: 0; } }
         .flash-fail {
           position: absolute; inset: 0;
-          background: rgba(178, 34, 34, 0.4);
+          background: rgba(255, 80, 60, 0.35);
           animation: flashRed 0.5s ease-out;
           pointer-events: none; z-index: 4;
         }
         @keyframes flashRed { 0% { opacity: 1; } 100% { opacity: 0; } }
         .flash-okori {
           position: absolute; inset: 0;
-          background: radial-gradient(circle at center, rgba(220, 40, 40, 0.22) 0%, transparent 60%);
+          background: radial-gradient(circle at center, rgba(255, 140, 60, 0.3) 0%, transparent 60%);
           animation: flashOkori 0.18s ease-out;
           pointer-events: none; z-index: 4;
         }
         @keyframes flashOkori { 0% { opacity: 1; } 100% { opacity: 0; } }
 
-        /* ===== 試合終了サマリー ===== */
+        /* ===== 結果サマリー ===== */
         .result-title {
-          margin: 0 0 14px;
-          font-size: 22px;
-          letter-spacing: 0.28em;
+          margin: 0 0 12px;
+          font-size: 24px;
+          letter-spacing: 0.05em;
           color: #fff;
-          font-weight: 700;
+          font-weight: 900;
           text-align: center;
-          text-shadow: 0 0 18px rgba(255, 215, 0, 0.5), 0 1px 2px #000;
+          text-shadow: 0 0 18px rgba(255, 215, 0, 0.6), 0 2px 2px #000;
           position: relative; z-index: 1;
         }
 
         .rank-display {
-          display: flex; align-items: baseline; justify-content: center; gap: 14px;
-          margin: 10px 0 16px;
+          display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+          margin: 8px 0 8px;
           padding: 14px 12px;
-          border: 1px solid;
+          border: 3px solid;
+          border-radius: 18px;
           animation: rankPop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
           position: relative; z-index: 1;
         }
         @keyframes rankPop {
-          0% { transform: scale(0.3); opacity: 0; }
-          70% { transform: scale(1.1); }
-          100% { transform: scale(1); opacity: 1; }
+          0% { transform: scale(0.3) rotate(-10deg); opacity: 0; }
+          70% { transform: scale(1.15) rotate(3deg); }
+          100% { transform: scale(1) rotate(0); opacity: 1; }
         }
         .rank-label {
-          font-size: 11px; letter-spacing: 0.3em;
-          color: #FFD700; opacity: 0.85;
+          font-size: 12px; font-weight: 700;
+          color: #ffd97a;
         }
         .rank-value {
-          font-size: 56px; font-weight: 900;
-          font-family: 'Noto Serif JP', serif;
+          font-size: 64px; font-weight: 900;
+          font-family: inherit;
           line-height: 1;
         }
+        .rank-cheer {
+          text-align: center;
+          font-size: 13px; font-weight: 700;
+          color: #ffd97a;
+          margin: 0 0 10px;
+          line-height: 1.6;
+          position: relative; z-index: 1;
+        }
         .rank-S {
-          background: linear-gradient(135deg, rgba(255, 215, 0, 0.2), rgba(178, 34, 34, 0.16));
-          border-color: #fbbf24;
+          background: linear-gradient(135deg, rgba(255, 215, 0, 0.25), rgba(255, 140, 60, 0.18));
+          border-color: #ffec6b;
         }
         .rank-S .rank-value {
-          color: #fbbf24;
-          text-shadow: 0 0 26px #fbbf24, 0 0 52px #FFD700;
+          color: #ffec6b;
+          text-shadow: 0 0 26px #ffec6b, 0 0 52px #ffb347;
         }
         .rank-A {
-          background: linear-gradient(135deg, rgba(255, 215, 0, 0.16), rgba(178, 34, 34, 0.12));
+          background: linear-gradient(135deg, rgba(255, 215, 0, 0.18), rgba(255, 140, 60, 0.12));
           border-color: #FFD700;
         }
-        .rank-A .rank-value {
-          color: #FFD700;
-          text-shadow: 0 0 22px #FFD700;
-        }
+        .rank-A .rank-value { color: #FFD700; text-shadow: 0 0 22px #FFD700; }
         .rank-B {
-          background: rgba(201, 169, 106, 0.1);
+          background: rgba(255, 240, 200, 0.1);
+          border-color: #ffd97a;
+        }
+        .rank-B .rank-value { color: #fff; text-shadow: 0 0 18px #ffd97a; }
+        .rank-C {
+          background: rgba(255, 240, 200, 0.05);
           border-color: #c9a96a;
         }
-        .rank-B .rank-value {
-          color: #f5e6c8;
-          text-shadow: 0 0 18px #c9a96a;
-        }
-        .rank-C {
-          background: rgba(201, 169, 106, 0.05);
-          border-color: #8a6f3a;
-        }
-        .rank-C .rank-value { color: #c9a96a; }
+        .rank-C .rank-value { color: #ffd97a; }
         .rank-F {
-          background: rgba(178, 34, 34, 0.1);
-          border-color: #ff7b6b;
+          background: rgba(255, 80, 60, 0.12);
+          border-color: #ff8c7a;
         }
-        .rank-F .rank-value { color: #ff5544; }
+        .rank-F .rank-value { color: #ff8c7a; }
 
         .summary-error {
-          font-size: 11px; color: #ff9b8b;
+          font-size: 12px; color: #ff9b8b; font-weight: 700;
           margin: 8px 0 0;
-          padding: 6px 10px;
-          background: rgba(178, 34, 34, 0.1);
-          border-left: 3px solid #ff7b6b;
-          letter-spacing: 0.05em;
+          padding: 8px 10px;
+          background: rgba(255, 80, 60, 0.12);
+          border-radius: 10px;
+          text-align: center;
         }
 
         .summary-rounds {
           margin: 14px 0;
-          border-top: 1px solid rgba(255, 215, 0, 0.25);
-          border-bottom: 1px solid rgba(255, 215, 0, 0.25);
-          padding: 8px 0;
+          padding: 10px;
+          background: rgba(20, 10, 10, 0.4);
+          border-radius: 12px;
           position: relative; z-index: 1;
         }
         .summary-round {
           display: grid;
-          grid-template-columns: 44px 1fr 32px 70px;
+          grid-template-columns: 50px 1fr 36px 72px;
           gap: 8px;
-          font-size: 11px;
+          font-size: 12px; font-weight: 700;
           padding: 5px 4px;
           align-items: center;
-          letter-spacing: 0.05em;
         }
-        .summary-round.ok { color: #FFD700; }
+        .summary-round.ok { color: #ffd97a; }
         .summary-round.ng { color: #ff9b8b; }
         .summary-round span:last-child { text-align: right; }
-        .round-name { letter-spacing: 0.05em; font-size: 11px; }
+        .round-name { font-size: 12px; }
         .summary-rank {
-          font-size: 10px !important; padding: 2px 4px !important;
+          font-size: 11px !important; padding: 2px 4px !important;
           font-weight: 900; text-align: center;
+          border-radius: 6px;
         }
 
-        .rank-S-tag { background: #fbbf24; color: #1a0606; box-shadow: 0 0 8px #fbbf24; }
+        .rank-S-tag { background: #ffec6b; color: #1a0606; box-shadow: 0 0 8px #ffec6b; }
         .rank-A-tag { background: #FFD700; color: #1a0606; }
-        .rank-B-tag { background: #c9a96a; color: #1a0606; }
-        .rank-C-tag { background: #8a6f3a; color: #fff; }
-        .rank-F-tag { background: #B22222; color: #f5e6c8; }
+        .rank-B-tag { background: #ffd97a; color: #1a0606; }
+        .rank-C-tag { background: #c9a96a; color: #1a0606; }
+        .rank-F-tag { background: #ff8c7a; color: #1a0606; }
       `}</style>
     </div>
   );
@@ -1881,20 +1772,20 @@ function KenshiSVG({ glowPart, intensity, active, onTap }: KenshiSVGProps) {
     if (!isTarget || intensity === null) {
       return {
         stroke: '#FFD700',
-        fill: 'rgba(80, 30, 30, 0.2)',
+        fill: 'rgba(120, 50, 40, 0.25)',
         filter: 'url(#goldGlow)',
       };
     }
     if (intensity === 'okori') {
       return {
         stroke: '#ff8866',
-        fill: 'rgba(178, 34, 34, 0.22)',
+        fill: 'rgba(255, 120, 60, 0.28)',
         filter: 'url(#redGlow)',
       };
     }
     return {
-      stroke: '#ff3030',
-      fill: 'rgba(200, 30, 30, 0.36)',
+      stroke: '#ff4030',
+      fill: 'rgba(255, 60, 40, 0.4)',
       filter: 'url(#redGlow)',
     };
   };
@@ -1940,7 +1831,7 @@ function KenshiSVG({ glowPart, intensity, active, onTap }: KenshiSVGProps) {
       </defs>
 
       <g pointerEvents="none">
-        <g stroke="#8B0000" strokeWidth="0.4" fill="none" opacity="0.5">
+        <g stroke="#ff8c5a" strokeWidth="0.4" fill="none" opacity="0.5">
           <line x1="150" y1="20" x2="150" y2="490" strokeDasharray="2 4" />
           <line x1="20" y1="100" x2="280" y2="100" strokeDasharray="1 3" />
           <line x1="20" y1="280" x2="280" y2="280" strokeDasharray="1 3" />
@@ -1954,11 +1845,9 @@ function KenshiSVG({ glowPart, intensity, active, onTap }: KenshiSVGProps) {
           <use href="#bracket-bl" x="20" y="448" width="22" height="22" />
           <use href="#bracket-br" x="258" y="448" width="22" height="22" />
         </g>
-        <g fill="#c9a96a" fontFamily="Noto Serif JP, serif" fontSize="8" opacity="0.7">
-          <text x="26" y="44">狙</text>
-          <text x="264" y="44">壱</text>
-          <text x="26" y="464">打突</text>
-          <text x="252" y="464">構</text>
+        <g fill="#ffcf8a" fontFamily="'Noto Sans JP', sans-serif" fontSize="9" opacity="0.75" fontWeight="700">
+          <text x="26" y="44">ねらえ！</text>
+          <text x="244" y="464">かまえ</text>
         </g>
       </g>
 
@@ -1979,7 +1868,7 @@ function KenshiSVG({ glowPart, intensity, active, onTap }: KenshiSVGProps) {
             <line x1="120" y1="142" x2="180" y2="142" opacity="0.85" />
             <line x1="128" y1="158" x2="172" y2="158" opacity="0.6" />
           </g>
-          <text x="196" y="92" fill="#c9a96a" fontFamily="Noto Serif JP, serif" fontSize="9" opacity="0.85">面</text>
+          <text x="196" y="92" fill="#ffcf8a" fontFamily="'Noto Sans JP', sans-serif" fontSize="11" fontWeight="700" opacity="0.9">面</text>
         </g>
       </g>
 
@@ -1999,7 +1888,7 @@ function KenshiSVG({ glowPart, intensity, active, onTap }: KenshiSVGProps) {
             <line x1="58" y1="370" x2="130" y2="365" />
             <polygon points="75,348 115,335 120,360 80,372" />
           </g>
-          <text x="40" y="420" fill="#c9a96a" fontFamily="Noto Serif JP, serif" fontSize="9" opacity="0.85">小手</text>
+          <text x="40" y="420" fill="#ffcf8a" fontFamily="'Noto Sans JP', sans-serif" fontSize="11" fontWeight="700" opacity="0.9">小手</text>
         </g>
       </g>
 
@@ -2021,13 +1910,13 @@ function KenshiSVG({ glowPart, intensity, active, onTap }: KenshiSVGProps) {
             <line x1="175" y1="260" x2="175" y2="345" strokeDasharray="2 2" />
             <path d="M 130 268 L 150 295 L 170 268" strokeWidth="0.7" />
           </g>
-          <text x="218" y="335" fill="#c9a96a" fontFamily="Noto Serif JP, serif" fontSize="9" opacity="0.85">胴</text>
+          <text x="218" y="335" fill="#ffcf8a" fontFamily="'Noto Sans JP', sans-serif" fontSize="11" fontWeight="700" opacity="0.9">胴</text>
         </g>
       </g>
 
       {/* 竹刀（黄金グロウ） */}
       <g className="sword" filter="url(#goldGlow)" pointerEvents="none">
-        <polygon points="143,92 157,92 152.5,322 147.5,322" stroke="#fbbf24" strokeWidth="1.3" fill="rgba(255, 215, 0, 0.22)" strokeLinejoin="miter" />
+        <polygon points="143,92 157,92 152.5,322 147.5,322" stroke="#fbbf24" strokeWidth="1.3" fill="rgba(255, 215, 0, 0.25)" strokeLinejoin="miter" />
         <line x1="150" y1="92" x2="150" y2="322" stroke="#fff8dc" strokeWidth="0.5" opacity="0.85" />
         <polygon points="146,92 149,92 151,322 150,322" fill="rgba(255, 248, 220, 0.4)" opacity="0.7" />
         <polygon points="145,318 155,318 158,322 155,326 145,326 142,322" stroke="#FFD700" strokeWidth="1.1" fill="rgba(255, 215, 0, 0.32)" />
@@ -2042,11 +1931,11 @@ function KenshiSVG({ glowPart, intensity, active, onTap }: KenshiSVGProps) {
         <circle cx="150" cy="86" r="5" fill="#ffffff" opacity="0.95" filter="url(#tipGlow)" />
         <circle cx="150" cy="86" r="2.5" fill="#ffffff" />
         <circle cx="150" cy="86" r="11" stroke="#fbbf24" strokeWidth="0.5" fill="none" strokeDasharray="2 2" opacity="0.65" />
-        <circle cx="150" cy="86" r="17" stroke="#B22222" strokeWidth="0.4" fill="none" opacity="0.5" />
-        <circle cx="150" cy="86" r="24" stroke="#8B0000" strokeWidth="0.3" fill="none" opacity="0.4" strokeDasharray="3 4" />
+        <circle cx="150" cy="86" r="17" stroke="#ff8c5a" strokeWidth="0.4" fill="none" opacity="0.5" />
+        <circle cx="150" cy="86" r="24" stroke="#ff8c5a" strokeWidth="0.3" fill="none" opacity="0.4" strokeDasharray="3 4" />
       </g>
 
-      <g pointerEvents="none" stroke="#8B0000" strokeWidth="0.5" fill="none" opacity="0.5" filter="url(#thinGlow)">
+      <g pointerEvents="none" stroke="#ff8c5a" strokeWidth="0.5" fill="none" opacity="0.5" filter="url(#thinGlow)">
         <circle cx="150" cy="250" r="3" />
         <line x1="140" y1="250" x2="146" y2="250" />
         <line x1="154" y1="250" x2="160" y2="250" />

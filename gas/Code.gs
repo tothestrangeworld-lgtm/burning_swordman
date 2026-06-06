@@ -1507,29 +1507,48 @@ function saveMinigameResult(payload) {
 }
 
 // =====================================================================
-// 6-3. getMinigameRanking : 道場内ベストタイム上位10名を取得
+// 6-3. getMinigameRanking : 道場内ベストタイム上位＆推移グラフ用データ
+// ★ Phase 6.1: グラフ描画用に history（日別ベストタイム推移）を追加
 //
 //   引数: なし
-//   戻り値: Array<{ userId, name, bestTimeMs }>
-//     - 生徒ごとに最小の average_time（最速）を集計
-//     - bestTimeMs 昇順（速い順）で上位10名
+//   戻り値:
+//     {
+//       top: Array<{ userId, name, bestTimeMs }>,   // 全期間ベスト上位10名（昇順）
+//       history: {
+//         dates:  Array<string>,                    // 直近7日（"MM-dd"・古い→新しい）
+//         series: Array<{                           // 上位5名分の推移
+//           userId: string,
+//           name:   string,
+//           points: Array<number | null>,           // 各日のベストタイム(ms)・記録なしはnull
+//         }>,
+//       },
+//     }
+//
+//   仕様:
 //     - 生徒マスタに存在し role==='student' のユーザーのみ対象
+//     - top: 全期間の最小 average_time で昇順 → 上位10名
+//     - history: 直近7日間について、各日×各生徒の「その日のベストタイム」を集計
+//                グラフが見やすいよう series は top 上位5名に限定
 // =====================================================================
 function getMinigameRanking() {
+  const HISTORY_DAYS    = 7;  // 推移グラフの対象日数
+  const HISTORY_PLAYERS = 5;  // 推移グラフに描画する人数（上位5名）
+
   const sh = _sheet_('minigame_scores');
   const data = sh.getDataRange().getValues();
 
   // 生徒情報マップ（id -> { name, role }）
   const usersMap = _getAllUsersMap_();
 
-  // userId -> bestTimeMs（最小値）を集計
+  // ───────────────────────────────────────────────
+  // (A) 全期間ベスト（top 用）を集計： userId -> 最小 average_time
+  // ───────────────────────────────────────────────
   const bestMap = {};
   // 列: id(0), user_id(1), created_at(2), average_time(3), rank(4), earned_xp(5)
   for (let i = 1; i < data.length; i++) {
     const uid = data[i][1];
     if (!uid) continue;
 
-    // 生徒以外（先生・退会者など）は除外
     const u = usersMap[uid];
     if (!u || u.role !== 'student') continue;
 
@@ -1541,8 +1560,8 @@ function getMinigameRanking() {
     }
   }
 
-  // 配列化 → 名前解決 → 昇順ソート → 上位10名
-  const ranking = Object.keys(bestMap).map(function (uid) {
+  // top 配列（全体ベスト昇順 → 上位10名）
+  const topAll = Object.keys(bestMap).map(function (uid) {
     const u = usersMap[uid];
     return {
       userId:     uid,
@@ -1550,10 +1569,82 @@ function getMinigameRanking() {
       bestTimeMs: bestMap[uid],
     };
   });
+  topAll.sort(function (a, b) {
+    return a.bestTimeMs - b.bestTimeMs;
+  });
+  const top = topAll.slice(0, MINIGAME_RANKING_LIMIT);
 
-  ranking.sort(function (a, b) {
-    return a.bestTimeMs - b.bestTimeMs; // 速い（小さい）ほど上位
+  // ───────────────────────────────────────────────
+  // (B) 直近7日間の日付配列（古い→新しい）を生成
+  // ───────────────────────────────────────────────
+  const dateKeys  = []; // "yyyy-MM-dd"（集計キー用）
+  const dateLabels = []; // "MM-dd"（フロント表示用）
+  for (let d = HISTORY_DAYS - 1; d >= 0; d--) {
+    const dt = new Date();
+    dt.setDate(dt.getDate() - d);
+    const ymd = Utilities.formatDate(dt, 'Asia/Tokyo', 'yyyy-MM-dd');
+    const md  = Utilities.formatDate(dt, 'Asia/Tokyo', 'MM-dd');
+    dateKeys.push(ymd);
+    dateLabels.push(md);
+  }
+
+  // 日付キー → インデックスの逆引き
+  const dateIndex = {};
+  dateKeys.forEach(function (k, idx) { dateIndex[k] = idx; });
+
+  // ───────────────────────────────────────────────
+  // (C) 推移グラフ対象プレイヤー（top 上位5名）
+  // ───────────────────────────────────────────────
+  const historyPlayers = top.slice(0, HISTORY_PLAYERS);
+  const playerIdSet = {};
+  historyPlayers.forEach(function (p) { playerIdSet[p.userId] = true; });
+
+  // userId -> [各日のベストタイム(ms) or null] を初期化
+  const seriesMap = {};
+  historyPlayers.forEach(function (p) {
+    const arr = [];
+    for (let k = 0; k < HISTORY_DAYS; k++) arr.push(null);
+    seriesMap[p.userId] = arr;
   });
 
-  return ranking.slice(0, MINIGAME_RANKING_LIMIT);
+  // ───────────────────────────────────────────────
+  // (D) minigame_scores を走査し、対象プレイヤー×対象日の
+  //      「その日のベストタイム（最小）」を埋める
+  // ───────────────────────────────────────────────
+  for (let i = 1; i < data.length; i++) {
+    const uid = data[i][1];
+    if (!uid || !playerIdSet[uid]) continue;
+
+    const dayKey = _mgDateStr_(data[i][2]); // "yyyy-MM-dd"
+    const idx = dateIndex[dayKey];
+    if (idx === undefined) continue; // 直近7日の範囲外
+
+    const t = Number(data[i][3]);
+    if (!Number.isFinite(t) || t <= 0) continue;
+
+    const cur = seriesMap[uid][idx];
+    if (cur === null || t < cur) {
+      seriesMap[uid][idx] = t;
+    }
+  }
+
+  // series 配列を組み立て
+  const series = historyPlayers.map(function (p) {
+    return {
+      userId: p.userId,
+      name:   p.name,
+      points: seriesMap[p.userId],
+    };
+  });
+
+  // ───────────────────────────────────────────────
+  // (E) レスポンス
+  // ───────────────────────────────────────────────
+  return {
+    top: top,
+    history: {
+      dates:  dateLabels,
+      series: series,
+    },
+  };
 }

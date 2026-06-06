@@ -2,7 +2,8 @@
 // =====================================================================
 // 燃えろ剣士 - GAS APIクライアント & SWRフック
 // Phase 5: 全体評価（一括評価）API追加
-// Phase 6: ミニゲーム『刹那ノ見切』API追加（1日5回・ランキング対応）
+// Phase 6:   ミニゲーム『刹那ノ見切』API追加（1日5回・ランキング対応）
+// Phase 6.1: ランキングAPIを { top, history } 構造へ拡張（推移グラフ対応）
 // =====================================================================
 
 import useSWR, { SWRConfiguration, SWRResponse } from 'swr';
@@ -391,6 +392,7 @@ export const SWR_KEYS = {
 
 // =====================================================================
 // ★★★ Phase 6: ミニゲーム『刹那ノ見切』API（重複排除・統合版） ★★★
+// ★★★ Phase 6.1: ランキングを { top, history } 構造へ拡張       ★★★
 // =====================================================================
 
 /**
@@ -440,7 +442,7 @@ export interface MinigameSaveResult {
 }
 
 /**
- * ランキング1件分（fetchMinigameRanking）
+ * ランキング1件分（top 用）
  */
 export interface MinigameRankingEntry {
   /** 生徒ID */
@@ -449,6 +451,33 @@ export interface MinigameRankingEntry {
   name:       string;
   /** その生徒のベストタイム（ms・小さいほど速い） */
   bestTimeMs: number;
+}
+
+/**
+ * ★ Phase 6.1: 推移グラフ用の1系列（1人分のタイム推移）
+ */
+export interface MinigameRankingSeries {
+  /** 生徒ID */
+  userId: string;
+  /** 生徒名（グラフの凡例に使用） */
+  name:   string;
+  /** 各日のベストタイム(ms)。記録がない日は null */
+  points: Array<number | null>;
+}
+
+/**
+ * ★ Phase 6.1: ランキングAPIのレスポンス全体
+ */
+export interface MinigameRankingResponse {
+  /** 全期間ベスト上位（最大10名・昇順） */
+  top: MinigameRankingEntry[];
+  /** 推移グラフ用データ */
+  history: {
+    /** 日付ラベル（"MM-dd"・古い→新しい） */
+    dates: string[];
+    /** 上位プレイヤーごとのタイム推移 */
+    series: MinigameRankingSeries[];
+  };
 }
 
 /**
@@ -521,11 +550,12 @@ export async function saveMinigameResult(
 }
 
 /**
- * 公開API: 道場内ベストタイム上位10名のランキングを取得（GET）
+ * 公開API: 道場内ランキング（TOP10＋推移グラフ用データ）を取得（GET）
  * 誰でも閲覧可能（生徒・先生問わず）。
+ * ★ Phase 6.1: 戻り値を { top, history } 構造に拡張。
  */
-export async function fetchMinigameRanking(): Promise<MinigameRankingEntry[]> {
-  return gasGet<MinigameRankingEntry[]>('getMinigameRanking');
+export async function fetchMinigameRanking(): Promise<MinigameRankingResponse> {
+  return gasGet<MinigameRankingResponse>('getMinigameRanking');
 }
 
 // =====================================================================
@@ -549,9 +579,10 @@ export function useMinigameStatusSWR() {
 
 // =====================================================================
 // SWRフック: ミニゲームランキング（任意・10秒キャッシュ）
+// ★ Phase 6.1: 戻り値型を MinigameRankingResponse に変更
 // =====================================================================
 export function useMinigameRankingSWR() {
-  return useSWR<MinigameRankingEntry[], Error>(
+  return useSWR<MinigameRankingResponse, Error>(
     'gas:getMinigameRanking',
     fetchMinigameRanking,
     {
