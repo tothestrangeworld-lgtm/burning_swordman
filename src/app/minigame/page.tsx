@@ -13,6 +13,7 @@
  * ★ lucide-react 不使用（自前インラインSVG）
  * ★ 1日5回プレイ制限
  * ★ 見切りランキング（TOP10 ＋ Recharts タイム推移グラフ）
+ * ★ Y軸反転（reversed）で「速い＝上」表示
  * =====================================================================
  */
 
@@ -206,6 +207,7 @@ function rankCheer(rank: MinigameRank): string {
 
 // =====================================================================
 // ★ ランキング推移グラフ（Recharts LineChart）
+//   Y軸は reversed で「速い（小さい）＝上」に表示
 // =====================================================================
 interface RankingChartProps {
   history: MinigameRankingResponse['history'];
@@ -235,7 +237,7 @@ function RankingChart({ history }: RankingChartProps) {
 
   return (
     <div className="chart-wrap">
-      <p className="chart-caption">📈 みんなのタイム推移（短いほどスゴイ！）</p>
+      <p className="chart-caption">📈 みんなのタイム推移（上にいくほど速い！⚡）</p>
       <div className="chart-box">
         <ResponsiveContainer width="100%" height={220}>
           <LineChart data={chartData} margin={{ top: 8, right: 12, bottom: 4, left: -12 }}>
@@ -250,6 +252,7 @@ function RankingChart({ history }: RankingChartProps) {
               stroke="rgba(255,215,0,0.4)"
               width={44}
               domain={['auto', 'auto']}
+              reversed={true}
               tickFormatter={(v) => `${v}s`}
             />
             <Tooltip
