@@ -4,6 +4,7 @@
 // 小学生剣士がスマホでサクサク画面遷移できる下部固定ナビ
 // ロール（生徒/先生）に応じて表示メニューを切替
 // Phase 6: 生徒メニューに「見切り」（ミニゲーム）を追加
+// Phase 7: 生徒・先生メニューに「設定」（あいことば変更）を追加
 // =====================================================================
 
 'use client';
@@ -75,6 +76,18 @@ function SwordsIcon({ size = 24, color, active }: IconProps) {
   );
 }
 
+// ★ Phase 7: 設定「歯車」アイコン（あいことば変更画面用・自作SVG）
+function SettingsIcon({ size = 24, color, active }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke={color} strokeWidth={active ? 2.5 : 2}
+      strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
+    </svg>
+  );
+}
+
 function LogOutIcon({ size = 24, color, active }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
@@ -103,15 +116,17 @@ interface NavItem {
 }
 
 const STUDENT_ITEMS: NavItem[] = [
-  { key: 'home',     label: 'ホーム', href: '/',                 icon: HomeIcon,   emoji: '🏠' },
-  { key: 'record',   label: '記録',   href: '/record',           icon: RecordIcon, emoji: '📝' },
-  { key: 'minigame', label: '見切り', href: '/minigame', icon: SwordsIcon, emoji: '⚔️' }, // ★ Phase 6 追加
-  { key: 'logout',   label: '退場',   action: 'logout',          icon: LogOutIcon, emoji: '🚪' },
+  { key: 'home',     label: 'ホーム', href: '/',         icon: HomeIcon,     emoji: '🏠' },
+  { key: 'record',   label: '記録',   href: '/record',   icon: RecordIcon,   emoji: '📝' },
+  { key: 'minigame', label: '見切り', href: '/minigame', icon: SwordsIcon,   emoji: '⚔️' }, // ★ Phase 6 追加
+  { key: 'settings', label: '設定',   href: '/settings', icon: SettingsIcon, emoji: '⚙️' }, // ★ Phase 7 追加
+  { key: 'logout',   label: '退場',   action: 'logout',  icon: LogOutIcon,   emoji: '🚪' },
 ];
 
 const TEACHER_ITEMS: NavItem[] = [
-  { key: 'students', label: '門下生', href: '/teacher', icon: UsersIcon,  emoji: '👥' },
-  { key: 'logout',   label: '退場',   action: 'logout', icon: LogOutIcon, emoji: '🚪' },
+  { key: 'students', label: '門下生', href: '/teacher',  icon: UsersIcon,    emoji: '👥' },
+  { key: 'settings', label: '設定',   href: '/settings', icon: SettingsIcon, emoji: '⚙️' }, // ★ Phase 7 追加
+  { key: 'logout',   label: '退場',   action: 'logout',  icon: LogOutIcon,   emoji: '🚪' },
 ];
 
 // 表示しないパス

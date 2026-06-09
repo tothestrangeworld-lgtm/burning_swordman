@@ -199,6 +199,7 @@ function doGet(e) {
 // =====================================================================
 // エントリーポイント：doPost（更新系）
 // ★ Phase 6: saveMinigameResult を追加
+// ★ Phase 7: updatePasscode（あいことば変更）を追加
 // =====================================================================
 function doPost(e) {
   let payload = {};
@@ -224,6 +225,10 @@ function doPost(e) {
       // ★ Phase 6.0 追加：ミニゲーム結果保存
       case 'saveMinigameResult':
         result = saveMinigameResult(payload);
+        break;
+      // ★ Phase 7.0 追加：あいことば（パスコード）変更
+      case 'updatePasscode':
+        result = updatePasscode(payload);
         break;
       default:
         throw new Error('未知のアクション: ' + action);
@@ -302,6 +307,68 @@ function login(payload) {
   }
 
   throw new Error('剣士IDが見つかりません');
+}
+
+// =====================================================================
+// ★★★ Phase 7.0：updatePasscode あいことば（パスコード）変更 ★★★
+//   users シート（列: id, name, passcode, role, grade）の
+//   user_id 一致行の 3 列目（passcode）を新しい値へ上書き保存する。
+//   - 本人確認のため、現在のあいことば（current_passcode）も照合する。
+//   - 新パスコードは 1〜20 文字の範囲でバリデーション。
+// =====================================================================
+function updatePasscode(payload) {
+  const userId       = (payload.user_id || '').toString().trim();
+  const newPasscode  = (payload.new_passcode || '').toString().trim();
+  // 任意：現在のあいことば（送られてきた場合のみ照合する）
+  const currentInput = (payload.current_passcode != null)
+    ? payload.current_passcode.toString().trim()
+    : null;
+
+  // ── 1. 入力バリデーション ──
+  if (!userId) {
+    throw new Error('剣士IDが指定されていません');
+  }
+  if (!newPasscode) {
+    throw new Error('あたらしいあいことばを入力してください');
+  }
+  if (newPasscode.length < 1 || newPasscode.length > 20) {
+    throw new Error('あいことばは1〜20文字で入力してください');
+  }
+
+  // ── 2. users シートから該当行を探す ──
+  const sh = _sheet_('users');
+  const data = sh.getDataRange().getValues();
+
+  // 列: id(0), name(1), passcode(2), role(3), grade(4)
+  for (let i = 1; i < data.length; i++) {
+    const id = String(data[i][0] || '').trim();
+    if (id !== userId) continue;
+
+    // ── 3. （任意）現在のあいことば照合 ──
+    //    フロントから current_passcode が送られてきた場合のみ確認する。
+    if (currentInput !== null) {
+      const dbPasscode = String(data[i][2] || '').trim();
+      if (dbPasscode !== currentInput) {
+        throw new Error('いまのあいことばがちがいます');
+      }
+    }
+
+    // ── 4. 3 列目（passcode）を上書き保存 ──
+    //    シート上の行番号は i + 1（ヘッダーが 1 行目のため）
+    //    列番号は 3（passcode は 3 列目）
+    sh.getRange(i + 1, 3).setValue(newPasscode);
+
+    // ── 5. 成功レスポンス（パスコード自体は返さない） ──
+    return {
+      updated: true,
+      user_id: id,
+      name:    String(data[i][1] || '').trim(),
+      message: 'あいことばを変更しました',
+    };
+  }
+
+  // 該当ユーザーが見つからない
+  throw new Error('剣士IDが見つかりません: ' + userId);
 }
 
 // =====================================================================

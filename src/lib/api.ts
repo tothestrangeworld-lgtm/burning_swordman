@@ -591,3 +591,70 @@ export function useMinigameRankingSWR() {
     },
   );
 }
+
+// =====================================================================
+// ★★★ Phase 7: あいことば（パスコード）変更API ★★★
+// =====================================================================
+
+/**
+ * あいことば変更レスポンスの型定義
+ */
+export interface UpdatePasscodeResponse {
+  /** 更新が成功したか */
+  updated: boolean;
+  /** 対象ユーザーID */
+  user_id: string;
+  /** 対象ユーザー名 */
+  name: string;
+  /** メッセージ */
+  message: string;
+}
+
+/**
+ * 内部API: GASへ updatePasscode を投げる
+ */
+export async function updateUserPasscodeApi(
+  payload: {
+    user_id: string;
+    new_passcode: string;
+    current_passcode?: string;
+  },
+): Promise<UpdatePasscodeResponse> {
+  return gasPost<UpdatePasscodeResponse>({
+    action: 'updatePasscode',
+    ...payload,
+  });
+}
+
+/**
+ * 公開ラッパー: あいことばを変更する
+ *   - 設定画面から呼びやすいシンプルな関数。
+ *   - userId を明示的に渡す版（ログイン情報に依存しすぎない設計）。
+ *   - 入力ガードを行ってから送信する。
+ *
+ * 例:
+ *   await updateUserPasscode('U001', '5678');
+ */
+export async function updateUserPasscode(
+  userId: string,
+  newPasscode: string,
+): Promise<UpdatePasscodeResponse> {
+  // 軽い入力ガード（無駄な通信を防ぐ）
+  const id = (userId || '').trim();
+  const next = (newPasscode || '').trim();
+
+  if (!id) {
+    throw new Error('ログイン情報が見つかりません');
+  }
+  if (!next) {
+    throw new Error('あたらしいあいことばを入力してください');
+  }
+  if (next.length < 1 || next.length > 20) {
+    throw new Error('あいことばは1〜20文字で入力してください');
+  }
+
+  return updateUserPasscodeApi({
+    user_id:      id,
+    new_passcode: next,
+  });
+}

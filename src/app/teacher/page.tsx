@@ -154,7 +154,6 @@ export default function TeacherHomePage() {
 
         {/* 先生プロフィール */}
         <section style={styles.teacherCard}>
-          <div style={styles.teacherIcon}>👨‍🏫</div>
           <div style={styles.teacherInfo}>
             <div style={styles.teacherLabel}>師範</div>
             <div style={styles.teacherName}>{data.teacher.name} 先生</div>
