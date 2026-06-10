@@ -7,9 +7,17 @@
 // =====================================================================
 
 import useSWR, { SWRConfiguration, SWRResponse } from 'swr';
+import { createClient } from '@supabase/supabase-js';
 import { getAuthUser } from './auth';
+import {
+  calcLevelFromXp,
+  calcSelfTaskXp,
+  calcTeacherTaskXp,
+  calcTechniqueXp,
+} from '@/types';
 import type {
   User,
+  UserStatus,
   DashboardData,
   TeacherDashboardData,
   StudentDetailData,
@@ -17,90 +25,115 @@ import type {
   SaveLogResponse,
   TeacherEvalPayload,
   TeacherEvalResponse,
-  GASResponse,
+  TaskLogEntry,
+  TechniqueLogEntry,
+  Technique,
+  TechniqueId,
+  XpHistoryEntry,
+  TaskMasterEntry,
+  TechniqueMasterEntry,
+  TitleMasterEntry,
+  TeacherEvaluationEntry,
+  Achievement,
+  AchievementMasterRow,
+  NextLevelInfo,
+  StudentSummary,
+} from '@/types';
+import {
+  xpForLevel,
+  titleForLevel,
+  nextTitleLevel,
 } from '@/types';
 
 // =====================================================================
-// GAS エンドポイント（環境変数）
+// Supabase クライアント（環境変数から生成）
+// 旧GASの GAS_URL / gasGet / gasPost は廃止
 // =====================================================================
-const GAS_URL = process.env.NEXT_PUBLIC_GAS_URL || '';
+const SUPABASE_URL =
+  process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const SUPABASE_ANON_KEY =
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
-if (!GAS_URL && typeof window !== 'undefined') {
-  console.error('[api] NEXT_PUBLIC_GAS_URL が設定されていません');
+if ((!SUPABASE_URL || !SUPABASE_ANON_KEY) && typeof window !== 'undefined') {
+  console.error(
+    '[api] NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY が設定されていません',
+  );
+}
+
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false,
+  },
+});
+
+// =====================================================================
+// 共通: Supabase エラーを統一例外へ変換するヘルパー
+// =====================================================================
+function throwIfError(error: { message: string } | null, context: string): void {
+  if (error) {
+    throw new Error(`[${context}] ${error.message}`);
+  }
 }
 
 // =====================================================================
-// 共通: GAS への GET リクエスト
-// =====================================================================
-export async function gasGet<T>(
-  action: string,
-  params: Record<string, string> = {},
-): Promise<T> {
-  const query = new URLSearchParams({ action, ...params }).toString();
-  const res = await fetch(`${GAS_URL}?${query}`, {
-    method: 'GET',
-    redirect: 'follow',
-  });
-  if (!res.ok) {
-    throw new Error(`通信エラー: ${res.status}`);
-  }
-  const json = (await res.json()) as GASResponse<T>;
-  if (json.status !== 'ok' || json.data === undefined) {
-    throw new Error(json.message || 'サーバーエラー');
-  }
-  return json.data;
-}
-
-// =====================================================================
-// 共通: GAS への POST リクエスト
-// CORS制約のため text/plain で送信（GAS側はJSON.parse対応）
-// =====================================================================
-export async function gasPost<T>(
-  payload: Record<string, unknown>,
-): Promise<T> {
-  const res = await fetch(GAS_URL, {
-    method:  'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body:    JSON.stringify(payload),
-    redirect: 'follow',
-  });
-  if (!res.ok) {
-    throw new Error(`通信エラー: ${res.status}`);
-  }
-  const json = (await res.json()) as GASResponse<T>;
-  if (json.status !== 'ok' || json.data === undefined) {
-    throw new Error(json.message || 'サーバーエラー');
-  }
-  return json.data;
-}
-
-// =====================================================================
-// 認証API
+// 認証API: users テーブルを id + passcode で直接照合
 // =====================================================================
 export async function loginUser(
   userId: string,
   passcode: string,
 ): Promise<User> {
-  return gasPost<User>({
-    action:   'login',
-    user_id:  userId,
-    passcode: passcode,
-  });
+  const { data, error } = await supabase
+    .from('users')
+    .select('id, name, role, grade, passcode')
+    .eq('id', userId)
+    .eq('passcode', passcode)
+    .single();
+
+  throwIfError(error, 'loginUser');
+
+  if (!data) {
+    throw new Error('IDまたはあいことばが正しくありません');
+  }
+
+  return {
+    id:    data.id,
+    name:  data.name,
+    role:  data.role,
+    grade: data.grade != null ? String(data.grade) : undefined,
+  };
 }
 
 // =====================================================================
 // 公開API: ユーザー一覧取得（ログイン画面のドロップダウン用）
+// users テーブルから個人情報を最小限に絞って取得
 // =====================================================================
-import type { UserListResponse } from '@/types';
+import type { UserListResponse, UserListEntry } from '@/types';
 
 export async function fetchUserList(): Promise<UserListResponse> {
-  return gasGet<UserListResponse>('getUserList');
+  const { data, error } = await supabase
+    .from('users')
+    .select('id, name, role, grade')
+    .order('role', { ascending: true })
+    .order('grade', { ascending: true })
+    .order('id', { ascending: true });
+
+  throwIfError(error, 'fetchUserList');
+
+  const users: UserListEntry[] = (data ?? []).map((u) => ({
+    id:    u.id,
+    name:  u.name,
+    role:  u.role,
+    grade: typeof u.grade === 'number' ? u.grade : Number(u.grade ?? 0),
+  }));
+
+  return { users };
 }
 
 // SWRフック版（5分キャッシュ・複数ログイン試行に有効）
 export function useUserListSWR() {
   return useSWR<UserListResponse, Error>(
-    'gas:getUserList',
+    'supabase:getUserList',
     fetchUserList,
     {
       ...SWR_BASE_CONFIG,
@@ -112,13 +145,128 @@ export function useUserListSWR() {
 // =====================================================================
 // 更新系API（Mutation）
 // =====================================================================
+// =====================================================================
+// 自己記録の保存: task_logs / technique_logs を insert し、
+// user_techniques・user_status を更新、xp_history を追記する
+// =====================================================================
 export async function saveLogApi(
   payload: Omit<SaveLogPayload, 'action'> & { user_id: string },
 ): Promise<SaveLogResponse> {
-  return gasPost<SaveLogResponse>({
-    action: 'saveLog',
-    ...payload,
+  const { user_id, date, taskEvals, techniques } = payload;
+
+  // --- 課題（自己評価）行を生成 ---
+  let xpFromTasks = 0;
+  const taskRows = (taskEvals ?? []).map((t) => {
+    const xp = calcSelfTaskXp(t.score);
+    xpFromTasks += xp;
+    return {
+      user_id,
+      date,
+      task_id:      t.task_id,
+      score:        t.score,
+      xp_earned:    xp,
+      evaluator_id: 'self',
+      comment:      null as string | null,
+    };
   });
+
+  // --- 技の記録行を生成 ---
+  let xpFromTech = 0;
+  const techRows = (techniques ?? []).map((t) => {
+    const xp = calcTechniqueXp(t.quantity, t.quality);
+    xpFromTech += xp;
+    return {
+      user_id,
+      date,
+      technique_id: t.technique_id,
+      quantity:     t.quantity,
+      quality:      t.quality,
+      xp_earned:    xp,
+    };
+  });
+
+  // --- insert（存在する場合のみ） ---
+  if (taskRows.length > 0) {
+    const { error } = await supabase.from('task_logs').insert(taskRows);
+    throwIfError(error, 'saveLog:task_logs');
+  }
+  if (techRows.length > 0) {
+    const { error } = await supabase.from('technique_logs').insert(techRows);
+    throwIfError(error, 'saveLog:technique_logs');
+  }
+
+  // --- user_techniques の累計ポイント更新（技ごと） ---
+  for (const t of techniques ?? []) {
+    const xp = calcTechniqueXp(t.quantity, t.quality);
+    const { data: cur, error: selErr } = await supabase
+      .from('user_techniques')
+      .select('points')
+      .eq('user_id', user_id)
+      .eq('technique_id', t.technique_id)
+      .maybeSingle();
+    throwIfError(selErr, 'saveLog:user_techniques.select');
+
+    const nextPoints = (cur?.points ?? 0) + xp;
+    const { error: upErr } = await supabase
+      .from('user_techniques')
+      .upsert(
+        {
+          user_id,
+          technique_id:  t.technique_id,
+          points:        nextPoints,
+          last_quantity: t.quantity,
+          last_quality:  t.quality,
+        },
+        { onConflict: 'user_id,technique_id' },
+      );
+    throwIfError(upErr, 'saveLog:user_techniques.upsert');
+  }
+
+  const earned = xpFromTasks + xpFromTech;
+
+  // --- user_status の更新（合計XP・レベル・最終稽古日） ---
+  const { data: st, error: stErr } = await supabase
+    .from('user_status')
+    .select('total_xp')
+    .eq('user_id', user_id)
+    .single();
+  throwIfError(stErr, 'saveLog:user_status.select');
+
+  const newTotal = (st?.total_xp ?? 0) + earned;
+  const newLevel = calcLevelFromXp(newTotal);
+
+  const { error: updErr } = await supabase
+    .from('user_status')
+    .update({
+      total_xp:           newTotal,
+      level:              newLevel,
+      last_practice_date: date,
+    })
+    .eq('user_id', user_id);
+  throwIfError(updErr, 'saveLog:user_status.update');
+
+  // --- xp_history への追記 ---
+  if (earned > 0) {
+    const { error: hisErr } = await supabase.from('xp_history').insert({
+      user_id,
+      date,
+      type:           'gain',
+      amount:         earned,
+      reason:         '自己記録（課題・技）',
+      total_xp_after: newTotal,
+      level:          newLevel,
+    });
+    throwIfError(hisErr, 'saveLog:xp_history');
+  }
+
+  return {
+    xp_earned:          earned,
+    xp_from_tasks:      xpFromTasks,
+    xp_from_techniques: xpFromTech,
+    total_xp:           newTotal,
+    level:              newLevel,
+    newAchievements:    [],
+  };
 }
 
 // ★ record/page.tsx から呼びやすい便利ラッパー
@@ -138,13 +286,98 @@ export async function saveLog(
   });
 }
 
+// ★ 互換用エイリアス: 課題ログのみを保存したい画面向け
+//   既存インターフェース saveTaskLog を維持（内部は saveLog に委譲）
+export async function saveTaskLog(
+  payload: { date: string; taskEvals: Array<{ task_id: string; score: number }> },
+): Promise<SaveLogResponse> {
+  return saveLog({
+    action: 'saveLog',
+    date:   payload.date,
+    taskEvals: payload.taskEvals,
+  });
+}
+
+// =====================================================================
+// 先生個別評価: task_logs を evaluator_id=先生ID で insert し、
+// XP×10ボーナスを user_status / xp_history に反映する
+// =====================================================================
 export async function evaluateStudentApi(
   payload: Omit<TeacherEvalPayload, 'action'> & { teacher_id: string },
 ): Promise<TeacherEvalResponse> {
-  return gasPost<TeacherEvalResponse>({
-    action: 'evaluateStudent',
-    ...payload,
-  });
+  const { teacher_id, student_id, evaluations } = payload;
+  const today = new Date().toISOString().slice(0, 10);
+
+  // --- 当日すでに先生評価済みの課題は二重評価を避ける ---
+  const { data: existing, error: exErr } = await supabase
+    .from('task_logs')
+    .select('task_id')
+    .eq('user_id', student_id)
+    .eq('date', today)
+    .neq('evaluator_id', 'self');
+  throwIfError(exErr, 'evaluateStudent:existing');
+
+  const alreadyTasks = new Set((existing ?? []).map((e) => e.task_id));
+
+  let xpGranted = 0;
+  let evaluatedCount = 0;
+  const rows = evaluations
+    .filter((ev) => !alreadyTasks.has(ev.task_id))
+    .map((ev) => {
+      const xp = calcTeacherTaskXp(ev.score);
+      xpGranted += xp;
+      evaluatedCount += 1;
+      return {
+        user_id:      student_id,
+        date:         today,
+        task_id:      ev.task_id,
+        score:        ev.score,
+        xp_earned:    xp,
+        evaluator_id: teacher_id,
+        comment:      ev.comment ?? null,
+      };
+    });
+
+  if (rows.length > 0) {
+    const { error } = await supabase.from('task_logs').insert(rows);
+    throwIfError(error, 'evaluateStudent:insert');
+  }
+
+  // --- user_status 更新 ---
+  const { data: st, error: stErr } = await supabase
+    .from('user_status')
+    .select('total_xp')
+    .eq('user_id', student_id)
+    .single();
+  throwIfError(stErr, 'evaluateStudent:user_status.select');
+
+  const newTotal = (st?.total_xp ?? 0) + xpGranted;
+  const newLevel = calcLevelFromXp(newTotal);
+
+  const { error: updErr } = await supabase
+    .from('user_status')
+    .update({ total_xp: newTotal, level: newLevel })
+    .eq('user_id', student_id);
+  throwIfError(updErr, 'evaluateStudent:user_status.update');
+
+  if (xpGranted > 0) {
+    const { error: hisErr } = await supabase.from('xp_history').insert({
+      user_id:        student_id,
+      date:           today,
+      type:           'teacher_eval',
+      amount:         xpGranted,
+      reason:         '先生からの評価',
+      total_xp_after: newTotal,
+      level:          newLevel,
+    });
+    throwIfError(hisErr, 'evaluateStudent:xp_history');
+  }
+
+  return {
+    xp_granted:      xpGranted,
+    student_level:   newLevel,
+    evaluated_count: evaluatedCount,
+  };
 }
 
 // ★ 先生画面から呼びやすい便利ラッパー（個別評価）
@@ -213,16 +446,88 @@ export interface BulkEvalResponse {
 }
 
 /**
- * 内部API: GASに対して bulk-evaluate を投げる
+ * 内部API: 全体評価を Supabase へ反映
+ * 各生徒に対して evaluateStudentApi を順次適用し、結果を集約する。
  */
 export async function evaluateBulkStudentsApi(
   payload: BulkEvalPayload & { teacher_id: string },
 ): Promise<BulkEvalResponse> {
-  return gasPost<BulkEvalResponse>({
-    action: 'evaluateBulkStudents',
-    ...payload,
-  });
+  const { teacher_id, student_ids, evaluations } = payload;
+
+  const results: BulkEvalResponse['results'] = [];
+  const failures: BulkEvalResponse['failures'] = [];
+  let processedCount = 0;
+  let failedCount = 0;
+  let totalXpGranted = 0;
+
+  for (const sid of student_ids) {
+    try {
+      // 評価前の二重チェック件数を把握するため、当日先生評価済みを取得
+      const today = new Date().toISOString().slice(0, 10);
+      const { data: existing } = await supabase
+        .from('task_logs')
+        .select('task_id')
+        .eq('user_id', sid)
+        .eq('date', today)
+        .neq('evaluator_id', 'self');
+      const already = new Set((existing ?? []).map((e) => e.task_id));
+      const skipped = evaluations.filter((ev) => already.has(ev.task_id)).length;
+
+      const res = await evaluateStudentApi({
+        teacher_id,
+        student_id:  sid,
+        evaluations,
+      });
+
+      // 生徒名取得（サマリ表示用）
+      const { data: u } = await supabase
+        .from('users')
+        .select('name')
+        .eq('id', sid)
+        .single();
+
+      const { data: st } = await supabase
+        .from('user_status')
+        .select('total_xp')
+        .eq('user_id', sid)
+        .single();
+
+      totalXpGranted += res.xp_granted;
+      processedCount += 1;
+      results.push({
+        student_id:    sid,
+        student_name:  u?.name ?? sid,
+        xp_granted:    res.xp_granted,
+        new_total_xp:  st?.total_xp ?? 0,
+        new_level:     res.student_level,
+        skipped_count: skipped,
+      });
+    } catch (e) {
+      failedCount += 1;
+      failures.push({
+        student_id: sid,
+        reason:     e instanceof Error ? e.message : '不明なエラー',
+      });
+    }
+  }
+
+  const xpPerStudent =
+    processedCount > 0 ? Math.round(totalXpGranted / processedCount) : 0;
+
+  return {
+    processed_count:  processedCount,
+    failed_count:     failedCount,
+    failures,
+    total_xp_granted: totalXpGranted,
+    xp_per_student:   xpPerStudent,
+    multiplier:       TEACHER_EVAL_MULTIPLIER_REF,
+    evaluated_count:  evaluations.length,
+    results,
+  };
 }
+
+// 全体評価レスポンスの multiplier 表示用（types の TEACHER_EVAL_MULTIPLIER を参照）
+const TEACHER_EVAL_MULTIPLIER_REF = 10;
 
 /**
  * 公開ラッパー: 全体評価ページから呼びやすい関数
@@ -299,7 +604,257 @@ function buildKey(action: string, params: Record<string, string>): string {
 }
 
 // =====================================================================
-// SWRフック: 生徒ダッシュボード
+// ダッシュボード: 各テーブルを Promise.all でパラレルフェッチして組み立て
+// =====================================================================
+
+/** xp_history から「先生評価」「総稽古回数」を概算するための内部ユーティリティ */
+function buildNextLevelInfo(
+  totalXp: number,
+  level: number,
+  titleMaster: TitleMasterEntry[],
+): NextLevelInfo {
+  const nextLv = nextTitleLevel(level, titleMaster);
+  const requiredAbs = xpForLevel(level + 1);
+  return {
+    required: requiredAbs > totalXp ? requiredAbs - totalXp : null,
+    title: nextLv ? nextLv.title : titleForLevel(level, titleMaster),
+  };
+}
+
+export async function fetchDashboard(userId: string): Promise<DashboardData> {
+  if (!userId) {
+    throw new Error('user_id が指定されていません');
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const since30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+
+  // --- パラレルフェッチ ---
+  const [
+    userRes,
+    statusRes,
+    taskMasterRes,
+    techMasterRes,
+    titleMasterRes,
+    taskLogsRes,
+    techLogsRes,
+    userTechRes,
+    xpHistoryRes,
+    achMasterRes,
+    userAchRes,
+  ] = await Promise.all([
+    supabase.from('users').select('id, name, role, grade').eq('id', userId).single(),
+    supabase
+      .from('user_status')
+      .select(
+        'user_id, total_xp, level, last_practice_date, last_decay_date, favorite_technique, catchphrase',
+      )
+      .eq('user_id', userId)
+      .single(),
+    supabase
+      .from('task_master')
+      .select('id, task_text, display_order, grade_min')
+      .order('display_order', { ascending: true }),
+    supabase
+      .from('technique_master')
+      .select('id, name, display_order')
+      .order('display_order', { ascending: true }),
+    supabase
+      .from('title_master')
+      .select('level, title')
+      .order('level', { ascending: true }),
+    supabase
+      .from('task_logs')
+      .select('id, user_id, date, task_id, score, xp_earned, evaluator_id, comment')
+      .eq('user_id', userId)
+      .gte('date', since30)
+      .order('date', { ascending: false }),
+    supabase
+      .from('technique_logs')
+      .select('id, user_id, date, technique_id, quantity, quality, xp_earned')
+      .eq('user_id', userId)
+      .gte('date', since30)
+      .order('date', { ascending: false }),
+    supabase
+      .from('user_techniques')
+      .select('user_id, technique_id, points, last_quantity, last_quality')
+      .eq('user_id', userId),
+    supabase
+      .from('xp_history')
+      .select('id, user_id, date, type, amount, reason, total_xp_after, level')
+      .eq('user_id', userId)
+      .order('date', { ascending: false })
+      .limit(100),
+    supabase
+      .from('achievement_master')
+      .select(
+        'achievement_id, name, condition_type, condition_value, description, hint, icon_type',
+      ),
+    supabase
+      .from('user_achievements')
+      .select('user_id, achievement_id, unlocked_at')
+      .eq('user_id', userId),
+  ]);
+
+  throwIfError(userRes.error, 'fetchDashboard:users');
+  throwIfError(taskMasterRes.error, 'fetchDashboard:task_master');
+  throwIfError(techMasterRes.error, 'fetchDashboard:technique_master');
+  throwIfError(titleMasterRes.error, 'fetchDashboard:title_master');
+  throwIfError(taskLogsRes.error, 'fetchDashboard:task_logs');
+  throwIfError(techLogsRes.error, 'fetchDashboard:technique_logs');
+  throwIfError(userTechRes.error, 'fetchDashboard:user_techniques');
+  throwIfError(xpHistoryRes.error, 'fetchDashboard:xp_history');
+  throwIfError(achMasterRes.error, 'fetchDashboard:achievement_master');
+  throwIfError(userAchRes.error, 'fetchDashboard:user_achievements');
+
+  if (!userRes.data) {
+    throw new Error('ユーザーが見つかりません');
+  }
+
+  // --- マスター類の整形 ---
+  const taskMaster: TaskMasterEntry[] = (taskMasterRes.data ?? []).map((t) => ({
+    id:            t.id,
+    task_text:     t.task_text,
+    display_order: t.display_order,
+    grade_min:     t.grade_min,
+  }));
+
+  const techniqueMaster: TechniqueMasterEntry[] = (techMasterRes.data ?? []).map(
+    (t) => ({
+      id:           t.id as TechniqueId,
+      name:         t.name,
+      displayOrder: t.display_order,
+    }),
+  );
+
+  const titleMaster: TitleMasterEntry[] = (titleMasterRes.data ?? []).map((t) => ({
+    level: t.level,
+    title: t.title,
+  }));
+
+  // --- task_master を辞書化して task_logs に task_text を結合 ---
+  const taskTextMap = new Map<string, string>(
+    taskMaster.map((t) => [t.id, t.task_text]),
+  );
+
+  const taskLogs: TaskLogEntry[] = (taskLogsRes.data ?? []).map((l) => ({
+    id:           l.id,
+    user_id:      l.user_id,
+    date:         l.date,
+    task_id:      l.task_id,
+    task_text:    taskTextMap.get(l.task_id) ?? '',
+    score:        l.score,
+    xp_earned:    l.xp_earned,
+    evaluator_id: l.evaluator_id ?? undefined,
+    comment:      l.comment ?? undefined,
+  }));
+
+  const techniqueLogs: TechniqueLogEntry[] = (techLogsRes.data ?? []).map((l) => ({
+    date:         l.date,
+    technique_id: l.technique_id as TechniqueId,
+    quantity:     l.quantity,
+    quality:      l.quality,
+    xp_earned:    l.xp_earned,
+  }));
+
+  // --- 三角レーダー用 techniques（technique_master を基準に user_techniques を結合） ---
+  const userTechMap = new Map(
+    (userTechRes.data ?? []).map((ut) => [ut.technique_id, ut]),
+  );
+  const techniques: Technique[] = techniqueMaster.map((tm) => {
+    const ut = userTechMap.get(tm.id);
+    return {
+      id:            tm.id,
+      name:          tm.name,
+      points:        ut?.points ?? 0,
+      last_quantity: (ut?.last_quantity ?? null) as Technique['last_quantity'],
+      last_quality:  (ut?.last_quality ?? null) as Technique['last_quality'],
+    };
+  });
+
+  const xpHistory: XpHistoryEntry[] = (xpHistoryRes.data ?? []).map((h) => ({
+    date:           h.date,
+    type:           h.type,
+    amount:         h.amount,
+    reason:         h.reason,
+    total_xp_after: h.total_xp_after,
+    level:          h.level,
+  }));
+
+  // --- 先生評価のみ抽出（evaluator_id が 'self' 以外） ---
+  const teacherEvals: TeacherEvaluationEntry[] = taskLogs
+    .filter((l) => l.evaluator_id && l.evaluator_id !== 'self')
+    .map((l) => ({
+      date:         l.date,
+      task_id:      l.task_id,
+      task_text:    l.task_text ?? '',
+      score:        l.score,
+      xp_earned:    l.xp_earned,
+      evaluator_id: l.evaluator_id ?? '',
+      comment:      l.comment,
+    }));
+
+  // --- ステータス（user_status が無ければ初期値で補完） ---
+  const rawStatus = statusRes.data;
+  const totalXp = rawStatus?.total_xp ?? 0;
+  const level = rawStatus?.level ?? calcLevelFromXp(totalXp);
+  const status: UserStatus = {
+    total_xp:           totalXp,
+    level,
+    last_practice_date: rawStatus?.last_practice_date ?? null,
+    last_decay_date:    rawStatus?.last_decay_date ?? null,
+    favorite_technique: rawStatus?.favorite_technique ?? undefined,
+    catchphrase:        rawStatus?.catchphrase ?? '',
+  };
+
+  // --- 実績（achievement_master × user_achievements） ---
+  const unlockedMap = new Map<string, string | null>(
+    (userAchRes.data ?? []).map((ua) => [ua.achievement_id, ua.unlocked_at ?? null]),
+  );
+  const achievements: Achievement[] = (
+    (achMasterRes.data ?? []) as AchievementMasterRow[]
+  ).map((m) => {
+    const unlockedAt = unlockedMap.has(m.achievement_id)
+      ? unlockedMap.get(m.achievement_id) ?? null
+      : null;
+    return {
+      id:          m.achievement_id,
+      name:        m.name,
+      description: m.description,
+      hint:        m.hint,
+      iconType:    m.icon_type,
+      isUnlocked:  unlockedMap.has(m.achievement_id),
+      unlockedAt,
+    };
+  });
+
+  const user: User = {
+    id:    userRes.data.id,
+    name:  userRes.data.name,
+    role:  userRes.data.role,
+    grade: userRes.data.grade != null ? String(userRes.data.grade) : undefined,
+  };
+
+  return {
+    user,
+    status,
+    taskMaster,
+    techniqueMaster,
+    titleMaster,
+    taskLogs,
+    techniqueLogs,
+    techniques,
+    xpHistory,
+    teacherEvals,
+    nextLevelXp: buildNextLevelInfo(totalXp, level, titleMaster),
+    achievements,
+  };
+}
+
+// =====================================================================
+// SWRフック: 生徒ダッシュボード（fetchDashboard を使用）
 // =====================================================================
 export function useDashboardSWR(
   userId: string | null | undefined,
@@ -308,12 +863,103 @@ export function useDashboardSWR(
 
   return useSWR<DashboardData, Error>(
     key,
-    async () => gasGet<DashboardData>('getDashboard', { user_id: userId! }),
+    async () => fetchDashboard(userId!),
     {
       ...SWR_BASE_CONFIG,
       dedupingInterval: SWR_DEDUP.DASHBOARD,
     },
   );
+}
+
+// =====================================================================
+// 先生ダッシュボード: 門下生一覧を Supabase からパラレル取得して組み立て
+// =====================================================================
+export async function fetchTeacherDashboard(
+  teacherId: string,
+): Promise<TeacherDashboardData> {
+  const [teacherRes, studentsRes, statusRes, techRes, titleRes, taskRes] =
+    await Promise.all([
+      supabase.from('users').select('id, name, role, grade').eq('id', teacherId).single(),
+      supabase.from('users').select('id, name, grade').eq('role', 'student'),
+      supabase
+        .from('user_status')
+        .select('user_id, total_xp, level, last_practice_date'),
+      supabase.from('user_techniques').select('user_id, technique_id, points'),
+      supabase.from('title_master').select('level, title').order('level', { ascending: true }),
+      supabase
+        .from('task_master')
+        .select('id, task_text, display_order, grade_min')
+        .order('display_order', { ascending: true }),
+    ]);
+
+  throwIfError(teacherRes.error, 'fetchTeacherDashboard:teacher');
+  throwIfError(studentsRes.error, 'fetchTeacherDashboard:students');
+  throwIfError(statusRes.error, 'fetchTeacherDashboard:user_status');
+  throwIfError(techRes.error, 'fetchTeacherDashboard:user_techniques');
+  throwIfError(titleRes.error, 'fetchTeacherDashboard:title_master');
+  throwIfError(taskRes.error, 'fetchTeacherDashboard:task_master');
+
+  if (!teacherRes.data) {
+    throw new Error('先生ユーザーが見つかりません');
+  }
+
+  const statusMap = new Map(
+    (statusRes.data ?? []).map((s) => [s.user_id, s]),
+  );
+
+  // 生徒×技ポイントを集計
+  const techByUser = new Map<string, { T001: number; T002: number; T003: number }>();
+  for (const t of techRes.data ?? []) {
+    const cur = techByUser.get(t.user_id) ?? { T001: 0, T002: 0, T003: 0 };
+    if (t.technique_id === 'T001') cur.T001 = t.points;
+    if (t.technique_id === 'T002') cur.T002 = t.points;
+    if (t.technique_id === 'T003') cur.T003 = t.points;
+    techByUser.set(t.user_id, cur);
+  }
+
+  const now = Date.now();
+  const students: StudentSummary[] = (studentsRes.data ?? []).map((u) => {
+    const st = statusMap.get(u.id);
+    const last = st?.last_practice_date ?? null;
+    const days =
+      last != null
+        ? Math.floor((now - new Date(last).getTime()) / (24 * 60 * 60 * 1000))
+        : null;
+    return {
+      user_id:               u.id,
+      name:                  u.name,
+      grade:                 typeof u.grade === 'number' ? u.grade : Number(u.grade ?? 0),
+      level:                 st?.level ?? 1,
+      total_xp:              st?.total_xp ?? 0,
+      last_practice_date:    last,
+      techniquePoints:       techByUser.get(u.id) ?? { T001: 0, T002: 0, T003: 0 },
+      daysSinceLastPractice: days,
+    };
+  });
+
+  const titleMaster: TitleMasterEntry[] = (titleRes.data ?? []).map((t) => ({
+    level: t.level,
+    title: t.title,
+  }));
+
+  const taskMaster: TaskMasterEntry[] = (taskRes.data ?? []).map((t) => ({
+    id:            t.id,
+    task_text:     t.task_text,
+    display_order: t.display_order,
+    grade_min:     t.grade_min,
+  }));
+
+  return {
+    teacher: {
+      id:    teacherRes.data.id,
+      name:  teacherRes.data.name,
+      role:  teacherRes.data.role,
+      grade: teacherRes.data.grade != null ? String(teacherRes.data.grade) : undefined,
+    },
+    students,
+    titleMaster,
+    taskMaster,
+  };
 }
 
 // =====================================================================
@@ -328,14 +974,143 @@ export function useTeacherDashboardSWR(
 
   return useSWR<TeacherDashboardData, Error>(
     key,
-    async () => gasGet<TeacherDashboardData>('getTeacherDashboard', {
-      teacher_id: teacherId!,
-    }),
+    async () => fetchTeacherDashboard(teacherId!),
     {
       ...SWR_BASE_CONFIG,
       dedupingInterval: SWR_DEDUP.TEACHER_LIST,
     },
   );
+}
+
+// =====================================================================
+// 生徒詳細: 先生が個別生徒画面を開いた際のデータを組み立て
+// =====================================================================
+export async function fetchStudentDetail(
+  studentId: string,
+): Promise<StudentDetailData> {
+  const today = new Date().toISOString().slice(0, 10);
+  const since30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+
+  const [studentRes, statusRes, taskRes, titleRes, logsRes, techRes, techMasterRes] =
+    await Promise.all([
+      supabase.from('users').select('id, name, role, grade').eq('id', studentId).single(),
+      supabase
+        .from('user_status')
+        .select(
+          'user_id, total_xp, level, last_practice_date, last_decay_date, favorite_technique, catchphrase',
+        )
+        .eq('user_id', studentId)
+        .single(),
+      supabase
+        .from('task_master')
+        .select('id, task_text, display_order, grade_min')
+        .order('display_order', { ascending: true }),
+      supabase.from('title_master').select('level, title').order('level', { ascending: true }),
+      supabase
+        .from('task_logs')
+        .select('id, user_id, date, task_id, score, xp_earned, evaluator_id, comment')
+        .eq('user_id', studentId)
+        .gte('date', since30)
+        .order('date', { ascending: false }),
+      supabase
+        .from('user_techniques')
+        .select('user_id, technique_id, points, last_quantity, last_quality')
+        .eq('user_id', studentId),
+      supabase
+        .from('technique_master')
+        .select('id, name, display_order')
+        .order('display_order', { ascending: true }),
+    ]);
+
+  throwIfError(studentRes.error, 'fetchStudentDetail:student');
+  throwIfError(taskRes.error, 'fetchStudentDetail:task_master');
+  throwIfError(titleRes.error, 'fetchStudentDetail:title_master');
+  throwIfError(logsRes.error, 'fetchStudentDetail:task_logs');
+  throwIfError(techRes.error, 'fetchStudentDetail:user_techniques');
+  throwIfError(techMasterRes.error, 'fetchStudentDetail:technique_master');
+
+  if (!studentRes.data) {
+    throw new Error('門下生が見つかりません');
+  }
+
+  const taskMaster: TaskMasterEntry[] = (taskRes.data ?? []).map((t) => ({
+    id:            t.id,
+    task_text:     t.task_text,
+    display_order: t.display_order,
+    grade_min:     t.grade_min,
+  }));
+  const taskTextMap = new Map<string, string>(
+    taskMaster.map((t) => [t.id, t.task_text]),
+  );
+
+  const recentLogs: TaskLogEntry[] = (logsRes.data ?? []).map((l) => ({
+    id:           l.id,
+    user_id:      l.user_id,
+    date:         l.date,
+    task_id:      l.task_id,
+    task_text:    taskTextMap.get(l.task_id) ?? '',
+    score:        l.score,
+    xp_earned:    l.xp_earned,
+    evaluator_id: l.evaluator_id ?? undefined,
+    comment:      l.comment ?? undefined,
+  }));
+
+  const techMaster = (techMasterRes.data ?? []) as Array<{
+    id: string;
+    name: string;
+    display_order: number;
+  }>;
+  const userTechMap = new Map(
+    (techRes.data ?? []).map((ut) => [ut.technique_id, ut]),
+  );
+  const techniques: Technique[] = techMaster.map((tm) => {
+    const ut = userTechMap.get(tm.id);
+    return {
+      id:            tm.id as TechniqueId,
+      name:          tm.name,
+      points:        ut?.points ?? 0,
+      last_quantity: (ut?.last_quantity ?? null) as Technique['last_quantity'],
+      last_quality:  (ut?.last_quality ?? null) as Technique['last_quality'],
+    };
+  });
+
+  // 当日すでに先生評価済みの課題ID（連打防止）
+  const todayEvaluatedTaskIds = recentLogs
+    .filter((l) => l.date === today && l.evaluator_id && l.evaluator_id !== 'self')
+    .map((l) => l.task_id);
+
+  const rawStatus = statusRes.data;
+  const totalXp = rawStatus?.total_xp ?? 0;
+  const status: UserStatus = {
+    total_xp:           totalXp,
+    level:              rawStatus?.level ?? calcLevelFromXp(totalXp),
+    last_practice_date: rawStatus?.last_practice_date ?? null,
+    last_decay_date:    rawStatus?.last_decay_date ?? null,
+    favorite_technique: rawStatus?.favorite_technique ?? undefined,
+    catchphrase:        rawStatus?.catchphrase ?? '',
+  };
+
+  const titleMaster: TitleMasterEntry[] = (titleRes.data ?? []).map((t) => ({
+    level: t.level,
+    title: t.title,
+  }));
+
+  return {
+    student: {
+      id:    studentRes.data.id,
+      name:  studentRes.data.name,
+      role:  studentRes.data.role,
+      grade: studentRes.data.grade != null ? String(studentRes.data.grade) : undefined,
+    },
+    status,
+    taskMaster,
+    titleMaster,
+    recentLogs,
+    techniques,
+    todayEvaluatedTaskIds,
+  };
 }
 
 // =====================================================================
@@ -354,10 +1129,7 @@ export function useStudentDetailSWR(
 
   return useSWR<StudentDetailData, Error>(
     key,
-    async () => gasGet<StudentDetailData>('getStudentDetail', {
-      teacher_id: teacherId!,
-      student_id: studentId!,
-    }),
+    async () => fetchStudentDetail(studentId!),
     {
       ...SWR_BASE_CONFIG,
       dedupingInterval: SWR_DEDUP.STUDENT_DETAIL,
@@ -481,12 +1253,46 @@ export interface MinigameRankingResponse {
 }
 
 /**
- * 内部API: 本日のプレイ状況を取得（GET）
+ * 内部API: 本日のプレイ状況を minigame_scores から算出
+ * 1日の上限は 5。本日分の件数と全期間ベストタイムを集計する。
  */
+const MINIGAME_DAILY_LIMIT = 5;
+
 export async function fetchMinigameStatusApi(
   userId: string,
 ): Promise<MinigameStatus> {
-  return gasGet<MinigameStatus>('getMinigameStatus', { user_id: userId });
+  const today = new Date().toISOString().slice(0, 10);
+
+  const [todayRes, bestRes] = await Promise.all([
+    supabase
+      .from('minigame_scores')
+      .select('id, created_at')
+      .eq('user_id', userId)
+      .gte('created_at', `${today}T00:00:00`)
+      .lte('created_at', `${today}T23:59:59`),
+    supabase
+      .from('minigame_scores')
+      .select('average_time')
+      .eq('user_id', userId)
+      .order('average_time', { ascending: true })
+      .limit(1),
+  ]);
+
+  throwIfError(todayRes.error, 'fetchMinigameStatus:today');
+  throwIfError(bestRes.error, 'fetchMinigameStatus:best');
+
+  const todayPlayed = (todayRes.data ?? []).length;
+  const remaining = Math.max(0, MINIGAME_DAILY_LIMIT - todayPlayed);
+
+  return {
+    todayPlayed,
+    dailyLimit: MINIGAME_DAILY_LIMIT,
+    remaining,
+    locked:     remaining <= 0,
+    bestTimeMs: bestRes.data && bestRes.data.length > 0
+      ? bestRes.data[0].average_time
+      : null,
+  };
 }
 
 /**
@@ -502,8 +1308,17 @@ export async function fetchMinigameStatus(): Promise<MinigameStatus> {
 }
 
 /**
- * 内部API: 試合結果を保存（POST）
+ * 内部API: 試合結果を minigame_scores に insert し、
+ * 獲得XPを user_status / xp_history に反映する
  */
+const MINIGAME_RANK_XP: Record<MinigameRank, number> = {
+  S: 30,
+  A: 20,
+  B: 10,
+  C: 5,
+  F: 2,
+};
+
 export async function saveMinigameResultApi(
   payload: {
     user_id:     string;
@@ -511,10 +1326,64 @@ export async function saveMinigameResultApi(
     rank:        MinigameRank;
   },
 ): Promise<MinigameSaveResult> {
-  return gasPost<MinigameSaveResult>({
-    action:      'saveMinigameResult',
-    ...payload,
+  const { user_id, averageTime, rank } = payload;
+  const earnedXp = MINIGAME_RANK_XP[rank] ?? 0;
+
+  // --- スコア行を保存 ---
+  const { error: insErr } = await supabase.from('minigame_scores').insert({
+    user_id,
+    created_at:   new Date().toISOString(),
+    average_time: averageTime,
+    rank,
+    earned_xp:    earnedXp,
   });
+  throwIfError(insErr, 'saveMinigameResult:insert');
+
+  // --- user_status 更新 ---
+  const { data: st, error: stErr } = await supabase
+    .from('user_status')
+    .select('total_xp, level')
+    .eq('user_id', user_id)
+    .single();
+  throwIfError(stErr, 'saveMinigameResult:user_status.select');
+
+  const prevLevel = st?.level ?? 1;
+  const newTotal = (st?.total_xp ?? 0) + earnedXp;
+  const newLevel = calcLevelFromXp(newTotal);
+
+  const { error: updErr } = await supabase
+    .from('user_status')
+    .update({ total_xp: newTotal, level: newLevel })
+    .eq('user_id', user_id);
+  throwIfError(updErr, 'saveMinigameResult:user_status.update');
+
+  const today = new Date().toISOString().slice(0, 10);
+  const { error: hisErr } = await supabase.from('xp_history').insert({
+    user_id,
+    date:           today,
+    type:           'minigame',
+    amount:         earnedXp,
+    reason:         `ミニゲーム（ランク${rank}）`,
+    total_xp_after: newTotal,
+    level:          newLevel,
+  });
+  throwIfError(hisErr, 'saveMinigameResult:xp_history');
+
+  // --- 本日プレイ回数の再集計 ---
+  const status = await fetchMinigameStatusApi(user_id);
+
+  return {
+    saved:       true,
+    earnedXp,
+    totalXp:     newTotal,
+    level:       newLevel,
+    leveledUp:   newLevel > prevLevel,
+    todayPlayed: status.todayPlayed,
+    remaining:   status.remaining,
+    locked:      status.locked,
+    averageTime,
+    rank,
+  };
 }
 
 /**
@@ -550,12 +1419,79 @@ export async function saveMinigameResult(
 }
 
 /**
- * 公開API: 道場内ランキング（TOP10＋推移グラフ用データ）を取得（GET）
- * 誰でも閲覧可能（生徒・先生問わず）。
- * ★ Phase 6.1: 戻り値を { top, history } 構造に拡張。
+ * 公開API: 道場内ランキング（TOP10＋推移グラフ用データ）を取得
+ * minigame_scores 全件から、ユーザーごとのベストタイムTOP10と
+ * 直近7日間のタイム推移を組み立てる。誰でも閲覧可能。
  */
 export async function fetchMinigameRanking(): Promise<MinigameRankingResponse> {
-  return gasGet<MinigameRankingResponse>('getMinigameRanking');
+  // 直近7日分のスコア（推移グラフ用）+ 全期間ベスト（TOP用）
+  const since7 = new Date(Date.now() - 6 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+
+  const [scoresRes, usersRes] = await Promise.all([
+    supabase
+      .from('minigame_scores')
+      .select('user_id, created_at, average_time')
+      .order('created_at', { ascending: true }),
+    supabase.from('users').select('id, name').eq('role', 'student'),
+  ]);
+
+  throwIfError(scoresRes.error, 'fetchMinigameRanking:scores');
+  throwIfError(usersRes.error, 'fetchMinigameRanking:users');
+
+  const nameMap = new Map(
+    (usersRes.data ?? []).map((u) => [u.id, u.name]),
+  );
+
+  // --- 全期間ベスト（昇順TOP10） ---
+  const bestByUser = new Map<string, number>();
+  for (const s of scoresRes.data ?? []) {
+    const cur = bestByUser.get(s.user_id);
+    if (cur == null || s.average_time < cur) {
+      bestByUser.set(s.user_id, s.average_time);
+    }
+  }
+  const top: MinigameRankingEntry[] = Array.from(bestByUser.entries())
+    .map(([userId, bestTimeMs]) => ({
+      userId,
+      name:       nameMap.get(userId) ?? userId,
+      bestTimeMs,
+    }))
+    .sort((a, b) => a.bestTimeMs - b.bestTimeMs)
+    .slice(0, 10);
+
+  // --- 直近7日の日付ラベル（MM-dd・古い→新しい） ---
+  const dates: string[] = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
+    dates.push(`${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+  }
+
+  // --- TOP10ユーザーの日別ベスト推移 ---
+  const series: MinigameRankingSeries[] = top.map((entry) => {
+    const byDate = new Map<string, number>();
+    for (const s of scoresRes.data ?? []) {
+      if (s.user_id !== entry.userId) continue;
+      const day = String(s.created_at).slice(0, 10);
+      if (day < since7) continue;
+      const label = `${day.slice(5, 7)}-${day.slice(8, 10)}`;
+      const cur = byDate.get(label);
+      if (cur == null || s.average_time < cur) {
+        byDate.set(label, s.average_time);
+      }
+    }
+    return {
+      userId: entry.userId,
+      name:   entry.name,
+      points: dates.map((d) => byDate.get(d) ?? null),
+    };
+  });
+
+  return {
+    top,
+    history: { dates, series },
+  };
 }
 
 // =====================================================================
@@ -569,7 +1505,7 @@ export function useMinigameStatusSWR() {
 
   return useSWR<MinigameStatus, Error>(
     key,
-    async () => gasGet<MinigameStatus>('getMinigameStatus', { user_id: me!.id }),
+    async () => fetchMinigameStatusApi(me!.id),
     {
       ...SWR_BASE_CONFIG,
       dedupingInterval: SWR_DEDUP.DASHBOARD,
@@ -611,7 +1547,7 @@ export interface UpdatePasscodeResponse {
 }
 
 /**
- * 内部API: GASへ updatePasscode を投げる
+ * 内部API: users.passcode を update する
  */
 export async function updateUserPasscodeApi(
   payload: {
@@ -620,10 +1556,92 @@ export async function updateUserPasscodeApi(
     current_passcode?: string;
   },
 ): Promise<UpdatePasscodeResponse> {
-  return gasPost<UpdatePasscodeResponse>({
-    action: 'updatePasscode',
-    ...payload,
-  });
+  const { user_id, new_passcode, current_passcode } = payload;
+
+  // current_passcode が指定された場合は現在値を照合
+  if (current_passcode !== undefined) {
+    const { data: cur, error: selErr } = await supabase
+      .from('users')
+      .select('passcode')
+      .eq('id', user_id)
+      .single();
+    throwIfError(selErr, 'updatePasscode:select');
+    if (!cur || cur.passcode !== current_passcode) {
+      throw new Error('いまのあいことばが正しくありません');
+    }
+  }
+
+  const { data, error } = await supabase
+    .from('users')
+    .update({ passcode: new_passcode })
+    .eq('id', user_id)
+    .select('id, name')
+    .single();
+  throwIfError(error, 'updatePasscode:update');
+
+  if (!data) {
+    throw new Error('ユーザーが見つかりません');
+  }
+
+  return {
+    updated: true,
+    user_id: data.id,
+    name:    data.name,
+    message: 'あいことばを変更しました',
+  };
+}
+
+// =====================================================================
+// 先生用: 課題マスター（task_master）の更新ラッパー
+// 子供向け仕様では生徒は課題を作れないため、生徒呼び出しは no-op とする。
+// 既存インターフェース updateTasks を維持しつつ Supabase 化。
+// =====================================================================
+export interface UpdateTasksResult {
+  updated: boolean;
+  count:   number;
+  message: string;
+}
+
+export async function updateTasks(
+  tasks: Array<{
+    id:            string;
+    task_text:     string;
+    display_order: number;
+    grade_min:     number;
+  }>,
+): Promise<UpdateTasksResult> {
+  const me = getAuthUser();
+
+  // 生徒は課題を編集できない仕様 → no-op で安全に返す
+  if (!me || me.role !== 'teacher') {
+    return {
+      updated: false,
+      count:   0,
+      message: '課題の編集は先生のみ可能です',
+    };
+  }
+
+  if (!Array.isArray(tasks) || tasks.length === 0) {
+    return { updated: false, count: 0, message: '更新する課題がありません' };
+  }
+
+  const rows = tasks.map((t) => ({
+    id:            t.id,
+    task_text:     t.task_text,
+    display_order: t.display_order,
+    grade_min:     t.grade_min,
+  }));
+
+  const { error } = await supabase
+    .from('task_master')
+    .upsert(rows, { onConflict: 'id' });
+  throwIfError(error, 'updateTasks:upsert');
+
+  return {
+    updated: true,
+    count:   rows.length,
+    message: '課題を更新しました',
+  };
 }
 
 /**

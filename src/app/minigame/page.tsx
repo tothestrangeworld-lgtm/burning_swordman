@@ -171,6 +171,42 @@ const CUTIN_TOO_EARLY = [
 const pickRandom = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
 
 // =====================================================================
+// ★ ランク判定の閾値（okori開始からの純粋な反応時間 ms）
+//   S: 0   〜 150
+//   A: 151 〜 250
+//   B: 251 〜 400
+//   C: 401 〜 600
+//   F: 601 〜（被弾＝反応が遅すぎた） / フライング / 部位ミス / タイムアウト
+// =====================================================================
+const RANK_THRESHOLD = {
+  S: 150,
+  A: 250,
+  B: 400,
+  C: 600,
+} as const;
+
+// ★ 純粋な反応時間(ms)からランクを判定するヘルパー
+function judgeRankByReaction(reactionMs: number): 'S' | 'A' | 'B' | 'C' | 'F' {
+  if (reactionMs <= RANK_THRESHOLD.S) return 'S';
+  if (reactionMs <= RANK_THRESHOLD.A) return 'A';
+  if (reactionMs <= RANK_THRESHOLD.B) return 'B';
+  if (reactionMs <= RANK_THRESHOLD.C) return 'C';
+  return 'F';
+}
+
+// ★ ランクに応じたカットインプール（絵文字あり・本アプリのテーマ準拠）を返すヘルパー
+function pickCutinByRank(rank: 'S' | 'A' | 'B' | 'C'): string {
+  switch (rank) {
+    case 'S': return pickRandom(CUTIN_S);
+    case 'A': return pickRandom(CUTIN_A);
+    case 'B':
+    case 'C':
+    default:  return pickRandom(CUTIN_BC);
+  }
+}
+
+
+// =====================================================================
 // ユーティリティ
 // =====================================================================
 const randomBetween = (min: number, max: number) => Math.random() * (max - min) + min;
@@ -324,7 +360,6 @@ export default function StudentMiniGamePage() {
   const [rankingError, setRankingError]     = useState<string>('');
 
   const okoriStartRef    = useRef<number | null>(null);
-  const strikeStartRef   = useRef<number | null>(null);
   const timerRef         = useRef<ReturnType<typeof setTimeout> | null>(null);
   const roundIdxRef      = useRef(0);
   const matchCountRef    = useRef(0);
@@ -441,7 +476,6 @@ export default function StudentMiniGamePage() {
 
         const okoriMs = randomBetween(400, 1000);
         timerRef.current = setTimeout(() => {
-          strikeStartRef.current = performance.now();
           setPhase('strike');
 
           timerRef.current = setTimeout(() => {
@@ -469,6 +503,9 @@ export default function StudentMiniGamePage() {
   }, [scheduleNextRound]);
 
   const handleTap = (part: HitPart) => {
+    // ── フライング（お手つき）判定 ──
+    // ★ 敵がまだ動き出していない無の間（waiting / pre_okori）のタップのみ即フライング失敗
+    //   okori 以降は有効打突として受け付けるため、ここには含めない
     if (phase === 'waiting' || phase === 'pre_okori') {
       if (timerRef.current) clearTimeout(timerRef.current);
       const dummyPattern = pickRandomPattern();
@@ -486,11 +523,13 @@ export default function StudentMiniGamePage() {
     }
 
     if (!currentPattern) return;
+    // ★ 起こり（okori）と打突（strike）の両フェーズでタップを有効打突として受け付ける
     if (phase !== 'okori' && phase !== 'strike') return;
     if (timerRef.current) clearTimeout(timerRef.current);
 
     const isCorrectPart = part === currentPattern.correctPart;
 
+    // ── 部位ミス → 失敗（タイム無効） ──
     if (!isCorrectPart) {
       finishRound({
         patternId:   currentPattern.id,
@@ -505,49 +544,40 @@ export default function StudentMiniGamePage() {
       return;
     }
 
-    const totalReactionMs = okoriStartRef.current
+    // ── 正しい部位タップ ──
+    // ★ 敵が動き始めた瞬間（okoriStartRef）からの純粋な経過時間をミリ秒で計測
+    const reactionMs = okoriStartRef.current !== null
       ? performance.now() - okoriStartRef.current
       : 0;
+    const reactionMsRounded = Math.round(reactionMs);
 
-    if (phase === 'okori') {
+    // ★ 反応時間の絶対値（0ms〜）だけでランクをフラット判定
+    const rank = judgeRankByReaction(reactionMsRounded);
+
+    // ── Fランク（600ms超）= 反応が遅すぎて被弾扱い ──
+    if (rank === 'F') {
       finishRound({
         patternId:   currentPattern.id,
-        success:     true,
-        reactionMs:  Math.round(totalReactionMs),
+        success:     false,
+        reactionMs:  reactionMsRounded, // 遅延タイムは記録（参考表示）
         successName: currentPattern.successName,
-        failLabel:   '',
-        timing:      'okori',
-        cutinText:   pickRandom(CUTIN_S),
-        rank:        'S',
+        failLabel:   currentPattern.failLabel,
+        timing:      'strike',
+        cutinText:   pickRandom(CUTIN_FAIL),
+        rank:        'F',
       });
       return;
     }
 
-    const delayFromStrike = strikeStartRef.current
-      ? performance.now() - strikeStartRef.current
-      : 0;
-
-    let rank: 'A' | 'B' | 'C';
-    let cutinPool: string[];
-    if (delayFromStrike < 200) {
-      rank = 'A';
-      cutinPool = CUTIN_A;
-    } else if (delayFromStrike < 400) {
-      rank = 'B';
-      cutinPool = CUTIN_BC;
-    } else {
-      rank = 'C';
-      cutinPool = CUTIN_BC;
-    }
-
+    // ── 成功（S / A / B / C） ──
     finishRound({
       patternId:   currentPattern.id,
       success:     true,
-      reactionMs:  Math.round(totalReactionMs),
+      reactionMs:  reactionMsRounded,
       successName: currentPattern.successName,
       failLabel:   '',
       timing:      'strike',
-      cutinText:   pickRandom(cutinPool),
+      cutinText:   pickCutinByRank(rank),
       rank,
     });
   };

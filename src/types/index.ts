@@ -14,17 +14,19 @@ export interface User {
   id:       string;
   name:     string;
   role:     UserRole;
-  grade:    number; // 1〜6（teacherは0）
+  grade?:   string; // 1〜6（teacherは0）。Supabase users.grade に対応
 }
 
 export interface UserStatus {
   total_xp:            number;
   level:               number;
   last_practice_date?: string | null;
+  /** 経験値減衰の最終適用日（Supabase user_status.last_decay_date） */
+  last_decay_date?:    string | null;
   /** 得意技ID（T001/T002/T003） */
   favorite_technique?: string;
   /** かけ声（10文字以内） */
-  catchphrase?:        string;
+  catchphrase:         string;
 }
 
 // =====================================================================
@@ -32,10 +34,10 @@ export interface UserStatus {
 // =====================================================================
 
 export interface TaskMasterEntry {
-  id:           string; // K001 など
-  taskText:     string;
-  displayOrder: number;
-  gradeMin:     number; // 対象学年下限
+  id:            string; // K001 など（task_master.id）
+  task_text:     string; // task_master.task_text
+  display_order: number; // task_master.display_order
+  grade_min:     number; // task_master.grade_min（対象学年下限）
 }
 
 // =====================================================================
@@ -46,8 +48,8 @@ export type TechniqueId = 'T001' | 'T002' | 'T003';
 
 export interface TechniqueMasterEntry {
   id:           TechniqueId;
-  name:         '面' | '小手' | '胴';
-  displayOrder: number;
+  name:         string; // Supabase technique_master.name（面 / 小手 / 胴）
+  displayOrder: number; // technique_master.display_order に対応
 }
 
 // =====================================================================
@@ -74,15 +76,17 @@ export const QUALITY_LABELS: Record<QualityLevel, string> = {
 // =====================================================================
 
 export interface TaskLogEntry {
-  date:         string;
-  task_id:      string;
-  task_text:    string; // GASがJOINして返却
-  score:        number; // 1〜5
-  xp_earned:    number;
-  /** 'self' または 先生ID */
-  evaluator_id:   string;
-  evaluator_name?: string;
-  comment?:         string;
+  id?:          string;  // task_logs.id（PK）
+  user_id?:     string;  // task_logs.user_id
+  date:         string;  // task_logs.date
+  task_id:      string;  // task_logs.task_id
+  task_text?:   string;  // task_master との結合で付与（DB列ではない）
+  score:        number;  // task_logs.score（1〜5）
+  xp_earned:    number;  // task_logs.xp_earned
+  /** 'self' または 先生ID（task_logs.evaluator_id） */
+  evaluator_id?:   string;
+  evaluator_name?: string; // users との結合で付与（DB列ではない）
+  comment?:        string;  // task_logs.comment
 }
 
 export interface TechniqueLogEntry {
@@ -157,6 +161,20 @@ export interface AchievementMasterEntry {
   iconType:       string;
 }
 
+/**
+ * Supabase achievement_master テーブルの生行型。
+ * api.ts で AchievementMasterEntry / Achievement へ変換するために使用。
+ */
+export interface AchievementMasterRow {
+  achievement_id:  string;
+  name:            string;
+  condition_type:  'total_practices' | 'teacher_evals' | 'technique_points';
+  condition_value: number;
+  description:     string;
+  hint:            string;
+  icon_type:       string;
+}
+
 export interface Achievement {
   id:          string;
   name:        string;
@@ -223,7 +241,7 @@ export interface DecayInfo {
 export interface DashboardData {
   user:             User;
   status:           UserStatus;
-  taskMaster:       TaskMasterEntry[];
+  taskMaster?:      TaskMasterEntry[]; // 先生が設定する固定課題（任意・パラレルフェッチ）
   techniqueMaster:  TechniqueMasterEntry[];
   titleMaster:      TitleMasterEntry[];
   taskLogs:         TaskLogEntry[];
