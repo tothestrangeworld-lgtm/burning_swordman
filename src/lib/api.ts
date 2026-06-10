@@ -1513,6 +1513,7 @@ export function useMinigameStatusSWR() {
   );
 }
 
+
 // =====================================================================
 // SWRフック: ミニゲームランキング（任意・10秒キャッシュ）
 // ★ Phase 6.1: 戻り値型を MinigameRankingResponse に変更
