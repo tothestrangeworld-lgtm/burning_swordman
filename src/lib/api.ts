@@ -225,24 +225,30 @@ export async function saveLogApi(
   const earned = xpFromTasks + xpFromTech;
 
   // --- user_status の更新（合計XP・レベル・最終稽古日） ---
+  // 初回記録などで user_status 行が未作成の場合があるため .maybeSingle() を使う。
+  // 0 行のときは null が返るので、初期値 0 から計算を始める。
   const { data: st, error: stErr } = await supabase
     .from('user_status')
     .select('total_xp')
     .eq('user_id', user_id)
-    .single();
+    .maybeSingle();
   throwIfError(stErr, 'saveLog:user_status.select');
 
   const newTotal = (st?.total_xp ?? 0) + earned;
   const newLevel = calcLevelFromXp(newTotal);
 
+  // 行が存在しない場合に備え、update ではなく upsert で「無ければ作る」。
   const { error: updErr } = await supabase
     .from('user_status')
-    .update({
-      total_xp:           newTotal,
-      level:              newLevel,
-      last_practice_date: date,
-    })
-    .eq('user_id', user_id);
+    .upsert(
+      {
+        user_id,
+        total_xp:           newTotal,
+        level:              newLevel,
+        last_practice_date: date,
+      },
+      { onConflict: 'user_id' },
+    );
   throwIfError(updErr, 'saveLog:user_status.update');
 
   // --- xp_history への追記 ---
@@ -345,20 +351,28 @@ export async function evaluateStudentApi(
   }
 
   // --- user_status 更新 ---
+  // user_status 行が未作成の生徒に備えて .maybeSingle() を使う（0 行でも例外にしない）。
   const { data: st, error: stErr } = await supabase
     .from('user_status')
     .select('total_xp')
     .eq('user_id', student_id)
-    .single();
+    .maybeSingle();
   throwIfError(stErr, 'evaluateStudent:user_status.select');
 
   const newTotal = (st?.total_xp ?? 0) + xpGranted;
   const newLevel = calcLevelFromXp(newTotal);
 
+  // 行が無い場合に備え、update ではなく upsert で「無ければ作る」。
   const { error: updErr } = await supabase
     .from('user_status')
-    .update({ total_xp: newTotal, level: newLevel })
-    .eq('user_id', student_id);
+    .upsert(
+      {
+        user_id:  student_id,
+        total_xp: newTotal,
+        level:    newLevel,
+      },
+      { onConflict: 'user_id' },
+    );
   throwIfError(updErr, 'evaluateStudent:user_status.update');
 
   if (xpGranted > 0) {
@@ -654,7 +668,7 @@ export async function fetchDashboard(userId: string): Promise<DashboardData> {
         'user_id, total_xp, level, last_practice_date, last_decay_date, favorite_technique, catchphrase',
       )
       .eq('user_id', userId)
-      .single(),
+      .maybeSingle(),
     supabase
       .from('task_master')
       .select('id, task_text, display_order, grade_min')
@@ -1004,7 +1018,7 @@ export async function fetchStudentDetail(
           'user_id, total_xp, level, last_practice_date, last_decay_date, favorite_technique, catchphrase',
         )
         .eq('user_id', studentId)
-        .single(),
+        .maybeSingle(),
       supabase
         .from('task_master')
         .select('id, task_text, display_order, grade_min')
@@ -1342,21 +1356,29 @@ export async function saveMinigameResultApi(
   throwIfError(insErr, 'saveMinigameResult:insert');
 
   // --- user_status 更新 ---
+  // user_status 行が未作成のユーザーに備えて .maybeSingle() を使う（0 行でも例外にしない）。
   const { data: st, error: stErr } = await supabase
     .from('user_status')
     .select('total_xp, level')
     .eq('user_id', user_id)
-    .single();
+    .maybeSingle();
   throwIfError(stErr, 'saveMinigameResult:user_status.select');
 
   const prevLevel = st?.level ?? 1;
   const newTotal = (st?.total_xp ?? 0) + earnedXp;
   const newLevel = calcLevelFromXp(newTotal);
 
+  // 行が無い場合に備え、update ではなく upsert で「無ければ作る」。
   const { error: updErr } = await supabase
     .from('user_status')
-    .update({ total_xp: newTotal, level: newLevel })
-    .eq('user_id', user_id);
+    .upsert(
+      {
+        user_id,
+        total_xp: newTotal,
+        level:    newLevel,
+      },
+      { onConflict: 'user_id' },
+    );
   throwIfError(updErr, 'saveMinigameResult:user_status.update');
 
   const today = new Date().toISOString().slice(0, 10);
