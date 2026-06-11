@@ -211,7 +211,7 @@ export default function RecordPage() {
   }
 
   const { taskMaster, techniqueMaster } = data;
-  const sortedTasks = [...taskMaster].sort((a, b) => a.displayOrder - b.displayOrder);
+  const sortedTasks = [...taskMaster].sort((a, b) => a.display_order - b.display_order);
   const sortedTechs = [...techniqueMaster].sort((a, b) => a.displayOrder - b.displayOrder);
 
   // -----------------------------------------------------------------
@@ -266,7 +266,7 @@ export default function RecordPage() {
                 key={task.id}
                 index={i}
                 taskId={task.id}
-                taskText={task.taskText}
+                taskText={task.task_text}
                 score={taskScores[task.id] ?? 0}
                 onChange={(score) => handleTaskChange(task.id, score)}
                 criteriaExpanded={expandedTaskId === task.id}
