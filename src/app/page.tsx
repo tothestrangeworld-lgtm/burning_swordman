@@ -159,7 +159,7 @@ export default function StudentDashboardPage() {
 
         {/* ② 通知表 */}
         <TaskReportCard
-          taskMaster={data.taskMaster}
+          taskMaster={data.taskMaster ?? []}
           taskLogs={data.taskLogs}
           teacherEvals={data.teacherEvals ?? []}
           windowDays={30}

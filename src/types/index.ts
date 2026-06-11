@@ -241,7 +241,7 @@ export interface DecayInfo {
 export interface DashboardData {
   user:             User;
   status:           UserStatus;
-  taskMaster?:      TaskMasterEntry[]; // 先生が設定する固定課題（任意・パラレルフェッチ）
+  taskMaster:       TaskMasterEntry[]; // 先生が設定する固定課題（パラレルフェッチで常に配列）
   techniqueMaster:  TechniqueMasterEntry[];
   titleMaster:      TitleMasterEntry[];
   taskLogs:         TaskLogEntry[];
