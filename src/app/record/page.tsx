@@ -305,8 +305,8 @@ export default function RecordPage() {
           </div>
         </section>
 
-        {/* 余白（フローティングボタン分） */}
-        <div style={{ height: 140 }} />
+        {/* 余白（フローティングボタン＋ボトムナビ分） */}
+        <div style={{ height: 200 }} />
       </div>
 
       {/* === 固定フッター（記録ボタン） === */}
@@ -539,7 +539,7 @@ const styles: Record<string, React.CSSProperties> = {
   // === 固定フッター ===
   fixedFooter: {
     position:        'fixed',
-    bottom:          0,
+    bottom:          '80px',
     left:            0,
     right:           0,
     backgroundColor: THEME.bgCard,

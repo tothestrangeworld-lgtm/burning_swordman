@@ -165,7 +165,7 @@ export async function saveLogApi(
       task_id:      t.task_id,
       score:        t.score,
       xp_earned:    xp,
-      evaluator_id: 'self',
+      evaluator_id: null as string | null,
       comment:      null as string | null,
     };
   });
@@ -309,12 +309,13 @@ export async function evaluateStudentApi(
   const today = new Date().toISOString().slice(0, 10);
 
   // --- 当日すでに先生評価済みの課題は二重評価を避ける ---
+  // 自己記録は evaluator_id = null。先生評価は「null でない行」で判定する。
   const { data: existing, error: exErr } = await supabase
     .from('task_logs')
     .select('task_id')
     .eq('user_id', student_id)
     .eq('date', today)
-    .neq('evaluator_id', 'self');
+    .not('evaluator_id', 'is', null);
   throwIfError(exErr, 'evaluateStudent:existing');
 
   const alreadyTasks = new Set((existing ?? []).map((e) => e.task_id));
@@ -464,12 +465,13 @@ export async function evaluateBulkStudentsApi(
     try {
       // 評価前の二重チェック件数を把握するため、当日先生評価済みを取得
       const today = new Date().toISOString().slice(0, 10);
+      // 自己記録は evaluator_id = null。先生評価は「null でない行」で判定する。
       const { data: existing } = await supabase
         .from('task_logs')
         .select('task_id')
         .eq('user_id', sid)
         .eq('date', today)
-        .neq('evaluator_id', 'self');
+        .not('evaluator_id', 'is', null);
       const already = new Set((existing ?? []).map((e) => e.task_id));
       const skipped = evaluations.filter((ev) => already.has(ev.task_id)).length;
 
