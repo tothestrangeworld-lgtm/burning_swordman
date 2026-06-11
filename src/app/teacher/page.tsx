@@ -56,9 +56,10 @@ export default function TeacherHomePage() {
   };
 
   // 学年表示
-  const formatGrade = (grade: number): string => {
-    if (!grade || grade < 1 || grade > 6) return '';
-    return `${grade}年生`;
+  const formatGrade = (grade: string | undefined): string => {
+    const n = Number(grade);                 // 文字列 "3" → 数値 3 に変換
+    if (!n || n < 1 || n > 6) return '';
+    return `${n}年生`;
   };
 
   const filteredStudents = useMemo(() => {

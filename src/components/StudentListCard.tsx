@@ -91,10 +91,11 @@ function getTrainingStatus(daysAgo: number | null): {
   };
 }
 
-// 学年表示の整形（number → "○年生"）
-function formatGrade(grade: number): string | null {
-  if (!grade || grade < 1 || grade > 6) return null;
-  return `${grade}年生`;
+// 学年表示の整形（string | undefined → "○年生"）
+function formatGrade(grade: string | undefined): string | null {
+  const n = Number(grade);                 // 文字列 "3" → 数値 3 に変換
+  if (!n || n < 1 || n > 6) return null;
+  return `${n}年生`;
 }
 
 export default function StudentListCard({ student, titleMaster }: Props) {

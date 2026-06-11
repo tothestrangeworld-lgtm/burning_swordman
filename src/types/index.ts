@@ -261,11 +261,11 @@ export interface DashboardData {
 export interface StudentSummary {
   user_id:      string;
   name:         string;
-  grade:        number;
+  grade?:       string;
   level:        number;
   total_xp:     number;
   last_practice_date?: string | null;
-  /** 三角レーダー用の累計ポイント */
+    /** 三角レーダー用の累計ポイント */
   techniquePoints: {
     T001: number; // 面
     T002: number; // 小手
@@ -496,7 +496,7 @@ export interface UserListEntry {
   id:    string;
   name:  string;
   role:  UserRole;
-  grade: number; // 0=teacher, 1〜6=student
+  grade?: string; // teacher は未設定 / student は "1"〜"6"
 }
 
 export interface UserListResponse {

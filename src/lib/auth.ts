@@ -17,7 +17,7 @@ export interface AuthUser {
   id:        string;
   name:      string;
   role:      UserRole;
-  grade:     number;
+  grade?:    string;
   loginAt:   string; // ISO8601
 }
 

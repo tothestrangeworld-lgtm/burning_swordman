@@ -232,7 +232,7 @@ export default function TeacherBulkEvalPage() {
   }
 
   const taskMaster = data.taskMaster ?? [];
-  const sortedTasks = [...taskMaster].sort((a, b) => a.displayOrder - b.displayOrder);
+  const sortedTasks = [...taskMaster].sort((a, b) => a.display_order  - b.display_order );
   const allSelected = data.students.length > 0 && selectedIds.size === data.students.length;
 
   // -----------------------------------------------------------------
@@ -362,7 +362,7 @@ export default function TeacherBulkEvalPage() {
                 key={task.id}
                 index={i}
                 taskId={task.id}
-                taskText={task.taskText}
+                taskText={task.task_text}
                 score={taskScores[task.id] ?? 0}
                 alreadyEvaluated={false}
                 multiplier={BULK_MULTIPLIER}

@@ -124,7 +124,7 @@ export async function fetchUserList(): Promise<UserListResponse> {
     id:    u.id,
     name:  u.name,
     role:  u.role,
-    grade: typeof u.grade === 'number' ? u.grade : Number(u.grade ?? 0),
+    grade: u.grade != null ? String(u.grade) : undefined,
   }));
 
   return { users };
@@ -928,7 +928,7 @@ export async function fetchTeacherDashboard(
     return {
       user_id:               u.id,
       name:                  u.name,
-      grade:                 typeof u.grade === 'number' ? u.grade : Number(u.grade ?? 0),
+      grade:                 u.grade != null ? String(u.grade) : undefined,
       level:                 st?.level ?? 1,
       total_xp:              st?.total_xp ?? 0,
       last_practice_date:    last,

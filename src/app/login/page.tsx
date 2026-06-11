@@ -48,7 +48,9 @@ export default function LoginPage() {
       .filter(u => u.role === roleTab)
       .sort((a, b) => {
         if (roleTab === 'student') {
-          if (a.grade !== b.grade) return a.grade - b.grade;
+          const ga = Number(a.grade ?? 0);   // 文字列 "3" → 数値 3（未設定は 0）
+          const gb = Number(b.grade ?? 0);
+          if (ga !== gb) return ga - gb;
         }
         return a.name.localeCompare(b.name, 'ja');
       });
@@ -202,7 +204,7 @@ export default function LoginPage() {
                 </select>
               )}
 
-              <p id="user-select-hint" style={styles.hint}>
+<p id="user-select-hint" style={styles.hint}>
                 {filteredUsers.length > 0 && (
                   <>
                     全 <strong style={{ color: '#FFD700' }}>{filteredUsers.length}</strong>名
@@ -214,7 +216,7 @@ export default function LoginPage() {
                         }}>
                           {selectedUser.name}
                         </strong>
-                        {selectedUser.grade > 0 && (
+                        {Number(selectedUser.grade ?? 0) > 0 && (
                           <span style={{ color: 'rgba(255,255,255,0.7)' }}>
                             {` (${selectedUser.grade}年生)`}
                           </span>
@@ -308,7 +310,7 @@ export default function LoginPage() {
 // =====================================================================
 function renderStudentOptions(users: UserListEntry[]): React.ReactNode {
   const byGrade = users.reduce<Record<number, UserListEntry[]>>((acc, u) => {
-    const g = u.grade || 0;
+    const g = Number(u.grade ?? 0);
     (acc[g] = acc[g] || []).push(u);
     return acc;
   }, {});

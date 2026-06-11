@@ -36,10 +36,12 @@ interface TaskCommentMap {
 }
 
 // 学年表示
-function formatGrade(grade: number): string {
-  if (!grade || grade < 1 || grade > 6) return '';
-  return `${grade}年生`;
+function formatGrade(grade: string | undefined): string {
+  const n = Number(grade);                 // 文字列 "3" → 数値 3 に変換
+  if (!n || n < 1 || n > 6) return '';
+  return `${n}年生`;
 }
+
 
 // =====================================================================
 // ★ 日付の短縮表示（MM/dd 形式に安全変換）
@@ -242,7 +244,7 @@ export default function TeacherEvalPage() {
 
   const { student, status, taskMaster, recentLogs, todayEvaluatedTaskIds = [] } = data;
   const titleMaster: TitleMasterEntry[] = data.titleMaster ?? [];
-  const sortedTasks = [...taskMaster].sort((a, b) => a.displayOrder - b.displayOrder);
+  const sortedTasks = [...taskMaster].sort((a, b) => a.display_order - b.display_order);
   const evaluableTasks = sortedTasks.filter(t => !todayEvaluatedTaskIds.includes(t.id));
   const allTasksDone = evaluableTasks.length === 0;
   const lvColor = levelColor(status.level);
@@ -372,12 +374,12 @@ export default function TeacherEvalPage() {
             </span>
           </div>
           <div style={styles.taskList}>
-            {sortedTasks.map((task, i) => (
+          {sortedTasks.map((task, i) => (
               <TeacherTaskRater
                 key={task.id}
                 index={i}
                 taskId={task.id}
-                taskText={task.taskText}
+                taskText={task.task_text}
                 score={taskScores[task.id] ?? 0}
                 alreadyEvaluated={todayEvaluatedTaskIds.includes(task.id)}
                 onChange={(score) => handleScoreChange(task.id, score)}

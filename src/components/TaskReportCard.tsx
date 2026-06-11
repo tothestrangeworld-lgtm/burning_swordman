@@ -94,7 +94,7 @@ function aggregateByTask(
 
     return {
       taskId:       m.id,
-      taskText:     m.taskText,
+      taskText:     m.task_text,
       count:        matched.length,
       selfScore:    avgScore(selfLogs),
       teacherScore: avgScore(teacherLogs),
