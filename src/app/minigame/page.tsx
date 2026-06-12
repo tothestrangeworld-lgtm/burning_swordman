@@ -117,14 +117,14 @@ interface RoundResult {
 // 8パターン定義
 // =====================================================================
 const PATTERNS: Pattern[] = [
-  { id: 'A', successName: '出端小手',     correctPart: 'kote', glowPart: 'kote', strikeDuration: 800, category: 'oji',     failLabel: 'HIT',  animClass: 'anim-A' },
-  { id: 'B', successName: '面返し胴',     correctPart: 'do',   glowPart: 'do',   strikeDuration: 380, category: 'oji',     failLabel: 'HIT',  animClass: 'anim-B' },
-  { id: 'C', successName: '出端面',       correctPart: 'men',  glowPart: 'men',  strikeDuration: 500, category: 'oji',     failLabel: 'HIT',  animClass: 'anim-C' },
-  { id: 'D', successName: '小手返し面',   correctPart: 'men',  glowPart: 'men',  strikeDuration: 400, category: 'oji',     failLabel: 'HIT',  animClass: 'anim-D' },
-  { id: 'E', successName: '小手抜き面',   correctPart: 'men',  glowPart: 'men',  strikeDuration: 500, category: 'oji',     failLabel: 'HIT',  animClass: 'anim-E' },
-  { id: 'F', successName: '合い小手面',   correctPart: 'kote', glowPart: 'kote', strikeDuration: 300, category: 'oji',     failLabel: 'HIT',  animClass: 'anim-F' },
-  { id: 'G', successName: '飛び込み面',   correctPart: 'men',  glowPart: 'men',  strikeDuration: 500, category: 'shikake', failLabel: 'MISS', animClass: 'anim-G' },
-  { id: 'H', successName: '飛び込み小手', correctPart: 'kote', glowPart: 'kote', strikeDuration: 500, category: 'shikake', failLabel: 'MISS', animClass: 'anim-H' },
+  { id: 'A', successName: '出端小手',     correctPart: 'kote', glowPart: 'kote', strikeDuration: 1000, category: 'oji',     failLabel: 'HIT',  animClass: 'anim-A' },
+  { id: 'B', successName: '面返し胴',     correctPart: 'do',   glowPart: 'do',   strikeDuration: 580, category: 'oji',     failLabel: 'HIT',  animClass: 'anim-B' },
+  { id: 'C', successName: '出端面',       correctPart: 'men',  glowPart: 'men',  strikeDuration: 700, category: 'oji',     failLabel: 'HIT',  animClass: 'anim-C' },
+  { id: 'D', successName: '小手返し面',   correctPart: 'men',  glowPart: 'men',  strikeDuration: 600, category: 'oji',     failLabel: 'HIT',  animClass: 'anim-D' },
+  { id: 'E', successName: '小手抜き面',   correctPart: 'men',  glowPart: 'men',  strikeDuration: 700, category: 'oji',     failLabel: 'HIT',  animClass: 'anim-E' },
+  { id: 'F', successName: '合い小手面',   correctPart: 'kote', glowPart: 'kote', strikeDuration: 500, category: 'oji',     failLabel: 'HIT',  animClass: 'anim-F' },
+  { id: 'G', successName: '飛び込み面',   correctPart: 'men',  glowPart: 'men',  strikeDuration: 700, category: 'shikake', failLabel: 'MISS', animClass: 'anim-G' },
+  { id: 'H', successName: '飛び込み小手', correctPart: 'kote', glowPart: 'kote', strikeDuration: 700, category: 'shikake', failLabel: 'MISS', animClass: 'anim-H' },
 ];
 
 const ROUNDS_PER_MATCH = 3;
@@ -170,19 +170,17 @@ const CUTIN_TOO_EARLY = [
 
 const pickRandom = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
 
-// =====================================================================
-// ★ ランク判定の閾値（okori開始からの純粋な反応時間 ms）
-//   S: 0   〜 150
-//   A: 151 〜 250
-//   B: 251 〜 400
-//   C: 401 〜 600
-//   F: 601 〜（被弾＝反応が遅すぎた） / フライング / 部位ミス / タイムアウト
-// =====================================================================
+// ★ 子ども向け調整版の閾値（学童期の選択反応＋位置決めを考慮して緩和）
+//   S: 0    〜 350   集中して見切れた「すごい！」枠
+//   A: 351  〜 550   普通に反応できれば届く
+//   B: 551  〜 750   ほとんどの子が到達できる
+//   C: 751  〜 1000  落ち着いてタップできれば成功
+//   F: 1001〜（okori中なら最低Cに丸めて成功・strike中は被弾）
 const RANK_THRESHOLD = {
-  S: 150,
-  A: 250,
-  B: 400,
-  C: 600,
+  S: 350,
+  A: 550,
+  B: 750,
+  C: 1000,
 } as const;
 
 // ★ 純粋な反応時間(ms)からランクを判定するヘルパー
@@ -474,7 +472,10 @@ export default function StudentMiniGamePage() {
         setFlashType('okori');
         setTimeout(() => setFlashType('none'), 120);
 
-        const okoriMs = randomBetween(400, 1000);
+        // ★ 子ども向け調整：okori継続（＝タップ猶予）を長めに確保
+        //   子どもの選択反応＋位置決め（500〜700ms程度）でも
+        //   焦らず正しい部位を押せるよう、900〜1600msに延長。
+        const okoriMs = randomBetween(900, 1600);
         timerRef.current = setTimeout(() => {
           setPhase('strike');
 
@@ -502,6 +503,16 @@ export default function StudentMiniGamePage() {
     scheduleNextRound();
   }, [scheduleNextRound]);
 
+  // ===================================================================
+  // ★ 案A: タップハンドラ（okori中タップ＝必ず成功）
+  //   - waiting / pre_okori 中のタップ → フライング（即Fランク・タイム無効）
+  //   - 部位ミス → Fランク・タイム無効
+  //   - okori 中の正しい部位タップ
+  //       → 「相手の起こりを見切った」＝必ず成功
+  //         反応時間(ms)に応じて S/A/B/C を付与（遅くても最低Cで成功）
+  //   - strike 中（okoriを見切れず打突を許した）の正しい部位タップ
+  //       → 被弾扱いの失敗（Fランク）
+  // ===================================================================
   const handleTap = (part: HitPart) => {
     // ── フライング（お手つき）判定 ──
     // ★ 敵がまだ動き出していない無の間（waiting / pre_okori）のタップのみ即フライング失敗
@@ -551,15 +562,12 @@ export default function StudentMiniGamePage() {
       : 0;
     const reactionMsRounded = Math.round(reactionMs);
 
-    // ★ 反応時間の絶対値（0ms〜）だけでランクをフラット判定
-    const rank = judgeRankByReaction(reactionMsRounded);
-
-    // ── Fランク（600ms超）= 反応が遅すぎて被弾扱い ──
-    if (rank === 'F') {
+    // ── strike フェーズ＝起こりを見切れず打突を許した → 被弾失敗（Fランク） ──
+    if (phase === 'strike') {
       finishRound({
         patternId:   currentPattern.id,
         success:     false,
-        reactionMs:  reactionMsRounded, // 遅延タイムは記録（参考表示）
+        reactionMs:  reactionMsRounded, // 被弾タイムは記録（参考表示）
         successName: currentPattern.successName,
         failLabel:   currentPattern.failLabel,
         timing:      'strike',
@@ -569,14 +577,19 @@ export default function StudentMiniGamePage() {
       return;
     }
 
-    // ── 成功（S / A / B / C） ──
+    // ── okori フェーズ＝起こりを見切った → 必ず成功 ──
+    // ★ 反応時間に応じて S/A/B/C を付与。
+    //   okori継続が長い回で600msを超えても、見切れている以上は最低Cで成功扱い。
+    let rank = judgeRankByReaction(reactionMsRounded);
+    if (rank === 'F') rank = 'C';
+
     finishRound({
       patternId:   currentPattern.id,
       success:     true,
       reactionMs:  reactionMsRounded,
       successName: currentPattern.successName,
       failLabel:   '',
-      timing:      'strike',
+      timing:      'okori',
       cutinText:   pickCutinByRank(rank),
       rank,
     });
