@@ -187,11 +187,15 @@ export default function XpTimelineChart({
     );
   }
 
-  const maxXP  = Math.max(...xpHistory.map(e => e.total_xp_after));
-  const height = embedded ? 170 : (compact ? 180 : 240);
-  const xTicks = buildXTicks(xpHistory);
+  // バックエンド（fetchDashboard）は xp_history を降順（最新順）で返すため、
+  // グラフ描画前に昇順（古い→新しい）へ並べ替える。元配列は破壊しない。
+  const sortedHistory = [...xpHistory].reverse();
 
-  const chartData = xpHistory.map(e => ({
+  const maxXP  = Math.max(...sortedHistory.map(e => e.total_xp_after));
+  const height = embedded ? 170 : (compact ? 180 : 240);
+  const xTicks = buildXTicks(sortedHistory);
+
+  const chartData = sortedHistory.map(e => ({
     label:          toDisplayDate(e.date),
     total_xp_after: Math.max(0, e.total_xp_after),
     amount:         e.amount,
@@ -201,6 +205,7 @@ export default function XpTimelineChart({
   }));
 
   const gradId = `${compact ? 'burningXpGradC' : 'burningXpGradF'}${isDarkChart ? 'D' : ''}`;
+
 
   return (
     <div style={{

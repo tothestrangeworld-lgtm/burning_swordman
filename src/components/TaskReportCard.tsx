@@ -87,10 +87,20 @@ function aggregateByTask(
   const cutoffStr = cutoff.toISOString().slice(0, 10);
   const recent = logs.filter(l => normalizeDateStr(l.date) >= cutoffStr);
 
+  // 自己評価か先生評価かの判定ヘルパー。
+  // バックエンド仕様（api.ts）では、
+  //   - 自己記録    : evaluator_id = null（→ フロントでは undefined / '' になる）
+  //   - 先生評価    : evaluator_id = 先生ID（'self' という文字列は使われない）
+  // そのため「evaluator_id が空かどうか」で確実に仕分けする。
+  const isSelfLog = (l: TaskLogEntry): boolean => {
+    const evalId = (l.evaluator_id ?? '').trim();
+    return evalId === '' || evalId === 'self';
+  };
+
   return master.map(m => {
     const matched     = recent.filter(l => l.task_id === m.id);
-    const selfLogs    = matched.filter(l => l.evaluator_id === 'self');
-    const teacherLogs = matched.filter(l => l.evaluator_id !== 'self');
+    const selfLogs    = matched.filter(l => isSelfLog(l));
+    const teacherLogs = matched.filter(l => !isSelfLog(l));
 
     return {
       taskId:       m.id,
