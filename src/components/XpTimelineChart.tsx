@@ -187,9 +187,15 @@ export default function XpTimelineChart({
     );
   }
 
-  // バックエンド（fetchDashboard）は xp_history を降順（最新順）で返すため、
-  // グラフ描画前に昇順（古い→新しい）へ並べ替える。元配列は破壊しない。
-  const sortedHistory = [...xpHistory].reverse();
+  // バックエンド（fetchDashboard）は xp_history を降順（最新順）で返し、
+  // かつ date は「YYYY-MM-DD（日付のみ）」のため同日の行が複数あると
+  // 取得順・reverse では時系列が確定しない。
+  // そこで date 文字列で明示的に昇順（古い→新しい）ソートする。
+  // YYYY-MM-DD は辞書順＝時系列順なので localeCompare で正しく並ぶ。
+  // 元配列は破壊しないようコピーしてからソートする。
+  const sortedHistory = [...xpHistory].sort((a, b) =>
+    String(a.date).slice(0, 10).localeCompare(String(b.date).slice(0, 10)),
+  );
 
   const maxXP  = Math.max(...sortedHistory.map(e => e.total_xp_after));
   const height = embedded ? 170 : (compact ? 180 : 240);
@@ -205,7 +211,6 @@ export default function XpTimelineChart({
   }));
 
   const gradId = `${compact ? 'burningXpGradC' : 'burningXpGradF'}${isDarkChart ? 'D' : ''}`;
-
 
   return (
     <div style={{
