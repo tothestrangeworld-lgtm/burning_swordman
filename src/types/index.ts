@@ -273,6 +273,8 @@ export interface StudentSummary {
   };
   /** 何日前に稽古したか（先生のアラート用） */
   daysSinceLastPractice: number | null;
+  /** 本日、ログイン中の先生が既にこの生徒を評価済みか（全体評価の1日1回制限用） */
+  evaluated_today_by_me?: boolean;
 }
 
 export interface TeacherDashboardData {

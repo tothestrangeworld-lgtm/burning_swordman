@@ -314,14 +314,17 @@ export async function evaluateStudentApi(
   const { teacher_id, student_id, evaluations } = payload;
   const today = new Date().toISOString().slice(0, 10);
 
-  // --- 当日すでに先生評価済みの課題は二重評価を避ける ---
-  // 自己記録は evaluator_id = null。先生評価は「null でない行」で判定する。
+  // --- 当日すでに「この先生」が評価済みの課題は二重評価を避ける ---
+  // ★ 修正: 二重評価防止は先生ごとに独立させる。
+  //         以前は「evaluator_id が null でない行（＝全先生の評価）」で判定していたため、
+  //         先生Aが評価すると先生Bが同じ生徒を評価できなくなっていた。
+  //         evaluator_id = teacher_id に絞ることで、各先生が1日1回ずつ評価できる。
   const { data: existing, error: exErr } = await supabase
     .from('task_logs')
     .select('task_id')
     .eq('user_id', student_id)
     .eq('date', today)
-    .not('evaluator_id', 'is', null);
+    .eq('evaluator_id', teacher_id);
   throwIfError(exErr, 'evaluateStudent:existing');
 
   const alreadyTasks = new Set((existing ?? []).map((e) => e.task_id));
@@ -363,13 +366,17 @@ export async function evaluateStudentApi(
   const newLevel = calcLevelFromXp(newTotal);
 
   // 行が無い場合に備え、update ではなく upsert で「無ければ作る」。
+  // ★ 修正: 先生評価も「その日の稽古」とみなし、last_practice_date を today に更新する。
+  //         これを更新しないと、先生評価のみを受けている生徒が
+  //         「サボり（長期間未稽古）」と誤判定されてしまうため。
   const { error: updErr } = await supabase
     .from('user_status')
     .upsert(
       {
-        user_id:  student_id,
-        total_xp: newTotal,
-        level:    newLevel,
+        user_id:            student_id,
+        total_xp:           newTotal,
+        level:              newLevel,
+        last_practice_date: today,
       },
       { onConflict: 'user_id' },
     );
@@ -893,20 +900,37 @@ export function useDashboardSWR(
 export async function fetchTeacherDashboard(
   teacherId: string,
 ): Promise<TeacherDashboardData> {
-  const [teacherRes, studentsRes, statusRes, techRes, titleRes, taskRes] =
-    await Promise.all([
-      supabase.from('users').select('id, name, role, grade').eq('id', teacherId).single(),
-      supabase.from('users').select('id, name, grade').eq('role', 'student'),
-      supabase
-        .from('user_status')
-        .select('user_id, total_xp, level, last_practice_date'),
-      supabase.from('user_techniques').select('user_id, technique_id, points'),
-      supabase.from('title_master').select('level, title').order('level', { ascending: true }),
-      supabase
-        .from('task_master')
-        .select('id, task_text, display_order, grade_min')
-        .order('display_order', { ascending: true }),
-    ]);
+  // 本日（YYYY-MM-DD）。ログイン中の先生が本日評価済みの生徒を判定するために使う。
+  const today = new Date().toISOString().slice(0, 10);
+
+  const [
+    teacherRes,
+    studentsRes,
+    statusRes,
+    techRes,
+    titleRes,
+    taskRes,
+    myEvalTodayRes,
+  ] = await Promise.all([
+    supabase.from('users').select('id, name, role, grade').eq('id', teacherId).single(),
+    supabase.from('users').select('id, name, grade').eq('role', 'student'),
+    supabase
+      .from('user_status')
+      .select('user_id, total_xp, level, last_practice_date'),
+    supabase.from('user_techniques').select('user_id, technique_id, points'),
+    supabase.from('title_master').select('level, title').order('level', { ascending: true }),
+    supabase
+      .from('task_master')
+      .select('id, task_text, display_order, grade_min')
+      .order('display_order', { ascending: true }),
+    // ★ 追加: 本日、この先生（teacherId）が評価した task_logs の user_id 一覧。
+    //         評価は先生ごとに独立しているため evaluator_id = teacherId で絞る。
+    supabase
+      .from('task_logs')
+      .select('user_id')
+      .eq('date', today)
+      .eq('evaluator_id', teacherId),
+  ]);
 
   throwIfError(teacherRes.error, 'fetchTeacherDashboard:teacher');
   throwIfError(studentsRes.error, 'fetchTeacherDashboard:students');
@@ -914,6 +938,7 @@ export async function fetchTeacherDashboard(
   throwIfError(techRes.error, 'fetchTeacherDashboard:user_techniques');
   throwIfError(titleRes.error, 'fetchTeacherDashboard:title_master');
   throwIfError(taskRes.error, 'fetchTeacherDashboard:task_master');
+  throwIfError(myEvalTodayRes.error, 'fetchTeacherDashboard:my_eval_today');
 
   if (!teacherRes.data) {
     throw new Error('先生ユーザーが見つかりません');
@@ -921,6 +946,11 @@ export async function fetchTeacherDashboard(
 
   const statusMap = new Map(
     (statusRes.data ?? []).map((s) => [s.user_id, s]),
+  );
+
+  // ★ 追加: 本日この先生が評価済みの生徒IDセット（重複防止フラグ用）
+  const evaluatedTodayByMe = new Set(
+    (myEvalTodayRes.data ?? []).map((e) => e.user_id),
   );
 
   // 生徒×技ポイントを集計
@@ -950,6 +980,8 @@ export async function fetchTeacherDashboard(
       last_practice_date:    last,
       techniquePoints:       techByUser.get(u.id) ?? { T001: 0, T002: 0, T003: 0 },
       daysSinceLastPractice: days,
+      // ★ 追加: 本日この先生が評価済みなら true（全体評価の選択制御に使用）
+      evaluated_today_by_me: evaluatedTodayByMe.has(u.id),
     };
   });
 
@@ -1003,6 +1035,7 @@ export function useTeacherDashboardSWR(
 // =====================================================================
 export async function fetchStudentDetail(
   studentId: string,
+  teacherId: string,
 ): Promise<StudentDetailData> {
   const today = new Date().toISOString().slice(0, 10);
   const since30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
@@ -1092,9 +1125,13 @@ export async function fetchStudentDetail(
     };
   });
 
-  // 当日すでに先生評価済みの課題ID（連打防止）
+  // 当日すでに「この先生」が評価済みの課題ID（連打防止）
+  // ★ 修正: 評価は先生ごとに独立しているため、ログイン中の先生（teacherId）が
+  //         付けた評価だけを連打防止対象とする。
+  //         以前は evaluator_id !== 'self'（＝全先生の評価）で判定していたため、
+  //         他の先生が評価した課題まで「評価済み」と表示されてしまっていた。
   const todayEvaluatedTaskIds = recentLogs
-    .filter((l) => l.date === today && l.evaluator_id && l.evaluator_id !== 'self')
+    .filter((l) => l.date === today && l.evaluator_id === teacherId)
     .map((l) => l.task_id);
 
   const rawStatus = statusRes.data;
@@ -1145,7 +1182,10 @@ export function useStudentDetailSWR(
 
   return useSWR<StudentDetailData, Error>(
     key,
-    async () => fetchStudentDetail(studentId!),
+    // ★ 修正: fetchStudentDetail が teacherId を必須引数に取るようになったため、
+    //         ログイン中の先生IDを第2引数として渡す。
+    //         key が null でない時点で teacherId / studentId は確定しているため非nullアサート可。
+    async () => fetchStudentDetail(studentId!, teacherId!),
     {
       ...SWR_BASE_CONFIG,
       dedupingInterval: SWR_DEDUP.STUDENT_DETAIL,

@@ -99,10 +99,21 @@ export default function TeacherBulkEvalPage() {
 
   const toggleAll = () => {
     if (!data) return;
-    if (selectedIds.size === data.students.length) {
+    // ★ 修正: 評価済み（evaluated_today_by_me）の生徒は選択対象から除外する。
+    //         disabled な生徒まで選択してしまうとUIと送信挙動が食い違うため。
+    const selectableIds = data.students
+      .filter((s) => !s.evaluated_today_by_me)
+      .map((s) => s.user_id);
+
+    // すでに選択可能な全員が選ばれていれば全解除、そうでなければ全選択。
+    const allSelectableSelected =
+      selectableIds.length > 0 &&
+      selectableIds.every((id) => selectedIds.has(id));
+
+    if (allSelectableSelected) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(data.students.map(s => s.user_id)));
+      setSelectedIds(new Set(selectableIds));
     }
   };
 
@@ -233,7 +244,12 @@ export default function TeacherBulkEvalPage() {
 
   const taskMaster = data.taskMaster ?? [];
   const sortedTasks = [...taskMaster].sort((a, b) => a.display_order  - b.display_order );
-  const allSelected = data.students.length > 0 && selectedIds.size === data.students.length;
+
+  // ★ 修正: 選択可能（未評価）な生徒だけを「全員選択」の母数とする。
+  const selectableStudents = data.students.filter((s) => !s.evaluated_today_by_me);
+  const allSelected =
+    selectableStudents.length > 0 &&
+    selectableStudents.every((s) => selectedIds.has(s.user_id));
 
   // -----------------------------------------------------------------
   // メインビュー
@@ -278,7 +294,8 @@ export default function TeacherBulkEvalPage() {
         <section style={styles.studentSection}>
           <div style={styles.studentSelectHeader}>
             <span style={styles.studentSelectCount}>
-              選択中：<strong style={styles.studentSelectCountNum}>{selectedIds.size}</strong> / {data.students.length} 名
+              {/* ★ 修正: 母数を「選択可能（未評価）な人数」に変更 */}
+              選択中：<strong style={styles.studentSelectCountNum}>{selectedIds.size}</strong> / {selectableStudents.length} 名
             </span>
             <button
               type="button"
@@ -287,6 +304,8 @@ export default function TeacherBulkEvalPage() {
                 ...styles.toggleAllBtn,
                 ...(allSelected ? styles.toggleAllBtnActive : {}),
               }}
+              // ★ 追加: 選択可能な生徒が1人もいなければ「全員選択」を無効化
+              disabled={selectableStudents.length === 0}
             >
               {allSelected ? '✗ 全員 解除' : '✓ 全員 選択'}
             </button>
@@ -294,13 +313,17 @@ export default function TeacherBulkEvalPage() {
 
           <div style={styles.studentGrid}>
             {data.students.map((s) => {
-              const isSelected = selectedIds.has(s.user_id);
+              // ★ 追加: 本日この先生が評価済みの生徒は選択不可
+              const isDone = !!s.evaluated_today_by_me;
+              const isSelected = !isDone && selectedIds.has(s.user_id);
               return (
                 <label
                   key={s.user_id}
                   style={{
                     ...styles.studentTile,
                     ...(isSelected ? styles.studentTileActive : {}),
+                    // ★ 追加: 評価済みはグレーアウト＋カーソル変更
+                    ...(isDone ? styles.studentTileDone : {}),
                   }}
                 >
                   <input
@@ -308,19 +331,27 @@ export default function TeacherBulkEvalPage() {
                     checked={isSelected}
                     onChange={() => toggleStudent(s.user_id)}
                     style={styles.hiddenCheckbox}
+                    // ★ 追加: 評価済みはチェックボックス自体を無効化
+                    disabled={isDone}
                   />
-                  <div style={{
-                    ...styles.tileCheckBadge,
-                    ...(isSelected ? styles.tileCheckBadgeActive : {}),
-                  }}>
-                    {isSelected ? '✓' : ''}
-                  </div>
+                  {isDone ? (
+                    // ★ 追加: 評価済みバッジ（右上）
+                    <div style={styles.tileDoneBadge}>評価済</div>
+                  ) : (
+                    <div style={{
+                      ...styles.tileCheckBadge,
+                      ...(isSelected ? styles.tileCheckBadgeActive : {}),
+                    }}>
+                      {isSelected ? '✓' : ''}
+                    </div>
+                  )}
                   <div style={styles.tileIcon}>
-                    {isSelected ? '⚔️' : '👤'}
+                    {isDone ? '✅' : isSelected ? '⚔️' : '👤'}
                   </div>
                   <div style={{
                     ...styles.tileName,
                     ...(isSelected ? styles.tileNameActive : {}),
+                    ...(isDone ? styles.tileNameDone : {}),
                   }}>
                     {s.name}
                   </div>
@@ -851,6 +882,37 @@ const styles: Record<string, React.CSSProperties> = {
     color:           '#2D0B0B',
     backgroundColor: '#FFD700',
     border:          '1px solid #FFD700',
+  },
+
+  // ★ 追加: 本日評価済みの生徒タイル（選択不可・グレーアウト）
+  studentTileDone: {
+    backgroundColor: 'rgba(255,255,255,0.02)',
+    border:          '2px dashed rgba(127,255,170,0.45)',
+    cursor:          'not-allowed',
+    opacity:         0.65,
+    boxShadow:       'none',
+  },
+  // ★ 追加: 「評価済」バッジ（右上・緑系）
+  tileDoneBadge: {
+    position:        'absolute',
+    top:             '4px',
+    right:           '4px',
+    padding:         '2px 6px',
+    borderRadius:    '999px',
+    backgroundColor: 'rgba(30,124,58,0.85)',
+    border:          '1px solid #7FFFAA',
+    fontSize:        '9px',
+    fontWeight:      900,
+    color:           '#EAFFF0',
+    letterSpacing:   '0.05em',
+    textShadow:      '0 0 4px rgba(127,255,170,0.6)',
+    lineHeight:      1.2,
+    whiteSpace:      'nowrap',
+  },
+  // ★ 追加: 評価済みタイルの名前（緑がかった淡色）
+  tileNameDone: {
+    color:      'rgba(234,255,240,0.75)',
+    textShadow: '0 1px 2px rgba(0,0,0,0.6)',
   },
 
   emptyStudents: {
