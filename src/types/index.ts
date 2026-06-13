@@ -134,6 +134,8 @@ export interface TeacherEvaluationEntry {
 export interface TeacherEvalPayload {
   action:      'evaluateStudent';
   student_id:  string;
+  /** 評価対象日（YYYY-MM-DD）。未指定の場合は当日として扱う（カレンダーからの遡り評価に対応） */
+  date?:       string;
   evaluations: Array<{
     task_id: string;
     score:   number;

@@ -25,6 +25,19 @@ import TaskRater          from '@/components/TaskRater';
 import TechniqueRecorder  from '@/components/TechniqueRecorder';
 import ResultModal        from '@/components/ResultModal';
 
+// =====================================================================
+// 本日の日付（YYYY-MM-DD）をローカルタイム基準で取得するヘルパー
+// new Date().toISOString() は UTC 基準のため、JST 深夜帯に前日へズレる。
+// ローカルの年月日から直接組み立てることで日付ズレを防ぐ。
+// =====================================================================
+function getTodayLocal(): string {
+  const d  = new Date();
+  const y  = d.getFullYear();
+  const m  = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
+}
+
 // 入力ステート
 interface TaskScoreMap {
   [taskId: string]: number; // 0=未評価, 1〜5
@@ -67,6 +80,9 @@ export default function RecordPage() {
   // -----------------------------------------------------------------
   const [taskScores, setTaskScores] = useState<TaskScoreMap>({});
   const [techInputs, setTechInputs] = useState<TechInputMap>({});
+
+  // ★ 追加: 記録対象日（初期値は本日・ローカル基準）。カレンダーで過去日も選択可能。
+  const [recordDate, setRecordDate] = useState<string>(getTodayLocal());
 
   const [submitting, setSubmitting]   = useState(false);
   const [submitError, setSubmitError] = useState('');
@@ -140,8 +156,6 @@ export default function RecordPage() {
     setPrevLevel(data?.status.level ?? 1);
 
     try {
-      const today = new Date().toISOString().slice(0, 10);
-
       const taskEvals = Object.entries(taskScores)
         .filter(([, s]) => s > 0)
         .map(([task_id, score]) => ({ task_id, score }));
@@ -156,7 +170,8 @@ export default function RecordPage() {
 
       const payload: SaveLogPayload = {
         action: 'saveLog',
-        date:   today,
+        // ★ 修正: ハードコードの本日ではなく、選択中の記録対象日を渡す。
+        date:   recordDate,
         ...(taskEvals.length  ? { taskEvals  } : {}),
         ...(techniques.length ? { techniques } : {}),
       };
@@ -248,6 +263,22 @@ export default function RecordPage() {
           <p style={styles.introSub}>
             できたところを ★ でつけて、技は「量」と「質」で記録だ！
           </p>
+        </section>
+
+        {/* ★ 追加: 日付選択（過去の稽古をさかのぼって記録できる） */}
+        <section style={styles.dateCard}>
+          <label htmlFor="record-date" style={styles.dateLabel}>
+            <span style={styles.dateLabelIcon}>📅</span>
+            <span>いつの稽古？</span>
+          </label>
+          <input
+            id="record-date"
+            type="date"
+            value={recordDate}
+            max={getTodayLocal()}
+            onChange={(e) => setRecordDate(e.target.value || getTodayLocal())}
+            style={styles.dateInput}
+          />
         </section>
 
         {/* === 1. 固定課題セクション === */}
@@ -490,6 +521,49 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize:  '13px',
     color:     'rgba(255,255,255,0.7)',
     lineHeight: 1.5,
+  },
+
+  // === 日付選択カード ===
+  dateCard: {
+    display:         'flex',
+    alignItems:      'center',
+    justifyContent:  'space-between',
+    gap:             '12px',
+    backgroundColor: THEME.bgCard,
+    borderRadius:    '12px',
+    padding:         '12px 14px',
+    border:          `2px solid ${THEME.primary}`,
+    boxShadow:       '0 4px 16px rgba(178,34,34,0.30), inset 0 0 24px rgba(178,34,34,0.10)',
+    flexWrap:        'wrap',
+  },
+  dateLabel: {
+    display:       'flex',
+    alignItems:    'center',
+    gap:           '6px',
+    fontSize:      '14px',
+    fontWeight:    900,
+    color:         '#FFD700',
+    letterSpacing: '0.05em',
+    textShadow:    '0 0 6px rgba(255,215,0,0.4)',
+  },
+  dateLabelIcon: {
+    fontSize: '18px',
+  },
+  dateInput: {
+    flex:            '1 1 160px',
+    minWidth:        '150px',
+    padding:         '10px 12px',
+    fontSize:        '16px',
+    fontWeight:      900,
+    color:           '#FFFFFF',
+    backgroundColor: 'rgba(0,0,0,0.30)',
+    border:          `2px solid ${THEME.primary}`,
+    borderRadius:    '8px',
+    outline:         'none',
+    letterSpacing:   '0.05em',
+    colorScheme:     'dark',
+    WebkitTapHighlightColor: 'transparent',
+    boxShadow:       'inset 0 0 10px rgba(178,34,34,0.25)',
   },
 
   // === セクション ===

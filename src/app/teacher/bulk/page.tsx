@@ -24,6 +24,19 @@ const BASE_XP_PER_SCORE = 5;
 /** 全体評価の倍率 */
 const BULK_MULTIPLIER = 5;
 
+// =====================================================================
+// 本日の日付（YYYY-MM-DD）をローカルタイム基準で取得するヘルパー
+// new Date().toISOString() は UTC 基準のため、JST 深夜帯に前日へズレる。
+// ローカルの年月日から直接組み立てることで日付ズレを防ぐ。
+// =====================================================================
+function getTodayLocal(): string {
+  const d  = new Date();
+  const y  = d.getFullYear();
+  const m  = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
+}
+
 interface TaskScoreMap {
   [taskId: string]: number;
 }
@@ -63,6 +76,8 @@ export default function TeacherBulkEvalPage() {
   const [selectedIds, setSelectedIds]       = useState<Set<string>>(new Set());
   const [taskScores, setTaskScores]         = useState<TaskScoreMap>({});
   const [taskComments, setTaskComments]     = useState<TaskCommentMap>({});
+  // ★ 追加: 評価対象日（初期値は本日・ローカル基準）。カレンダーで過去日も選択可能。
+  const [evalDate, setEvalDate]             = useState<string>(getTodayLocal());
   const [submitting, setSubmitting]         = useState(false);
   const [submitError, setSubmitError]       = useState('');
   const [success, setSuccess]               = useState<{ xp: number; count: number } | null>(null);
@@ -179,6 +194,8 @@ export default function TeacherBulkEvalPage() {
 
       await evaluateBulkStudents({
         student_ids: Array.from(selectedIds),
+        // ★ 追加: 選択中の評価対象日を渡す（全選択生徒に同じ日付で一括適用）。
+        date:        evalDate,
         evaluations,
       });
 
@@ -285,6 +302,22 @@ export default function TeacherBulkEvalPage() {
               選んだ門下生全員に、評価した課題のXPをまとめて付与します（×5倍ボーナス）。
             </div>
           </div>
+        </section>
+
+        {/* ★ 追加: 日付選択（過去の稽古をさかのぼって一括評価できる） */}
+        <section style={styles.dateCard}>
+          <label htmlFor="bulk-eval-date" style={styles.dateLabel}>
+            <span style={styles.dateLabelIcon}>📅</span>
+            <span>いつの評価？</span>
+          </label>
+          <input
+            id="bulk-eval-date"
+            type="date"
+            value={evalDate}
+            max={getTodayLocal()}
+            onChange={(e) => setEvalDate(e.target.value || getTodayLocal())}
+            style={styles.dateInput}
+          />
         </section>
 
         {/* 区切り：生徒選択 */}
@@ -711,6 +744,49 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize:   '12px',
     color:      'rgba(255,255,255,0.85)',
     lineHeight: 1.5,
+  },
+
+  // === 日付選択カード ===
+  dateCard: {
+    display:         'flex',
+    alignItems:      'center',
+    justifyContent:  'space-between',
+    gap:             '12px',
+    backgroundColor: THEME.bgCard,
+    borderRadius:    '12px',
+    padding:         '12px 14px',
+    border:          `2px solid ${THEME.primary}`,
+    boxShadow:       '0 4px 16px rgba(178,34,34,0.30), inset 0 0 24px rgba(178,34,34,0.10)',
+    flexWrap:        'wrap',
+  },
+  dateLabel: {
+    display:       'flex',
+    alignItems:    'center',
+    gap:           '6px',
+    fontSize:      '14px',
+    fontWeight:    900,
+    color:         '#FFD700',
+    letterSpacing: '0.05em',
+    textShadow:    '0 0 6px rgba(255,215,0,0.4)',
+  },
+  dateLabelIcon: {
+    fontSize: '18px',
+  },
+  dateInput: {
+    flex:            '1 1 160px',
+    minWidth:        '150px',
+    padding:         '10px 12px',
+    fontSize:        '16px',
+    fontWeight:      900,
+    color:           '#FFFFFF',
+    backgroundColor: 'rgba(0,0,0,0.30)',
+    border:          `2px solid ${THEME.primary}`,
+    borderRadius:    '8px',
+    outline:         'none',
+    letterSpacing:   '0.05em',
+    colorScheme:     'dark',
+    WebkitTapHighlightColor: 'transparent',
+    boxShadow:       'inset 0 0 10px rgba(178,34,34,0.25)',
   },
 
   // === 区切り ===

@@ -77,6 +77,28 @@ function throwIfError(error: { message: string } | null, context: string): void 
 }
 
 // =====================================================================
+// 共通: 日付（YYYY-MM-DD）を timestamptz 用の ISO 文字列へ変換するヘルパー
+// -------------------------------------------------------------------
+// DB側の date カラムが text → timestamptz へ変更されたことに伴い、
+// 保存前に必ず時刻付き ISO 文字列へ正規化する。
+//
+// ・date 未指定（当日記録）        → 現在時刻そのまま new Date().toISOString()
+// ・date 指定（カレンダーからの遡り）→ JST 正午(12:00+09:00)を基準に ISO 化
+//
+// JST 正午を基準にする理由:
+//   UTC へ変換しても同日内（当日 03:00 UTC）に収まり、
+//   -9 時間の時差で前日へ巻き戻る事故を確実に防げるため。
+// =====================================================================
+function resolveTimestamp(date?: string): string {
+  // YYYY-MM-DD 形式（厳密一致）なら JST 正午を基準に ISO 化する。
+  if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return new Date(`${date}T12:00:00+09:00`).toISOString();
+  }
+  // 未指定・不正値は当日扱い（現在時刻）。
+  return new Date().toISOString();
+}
+
+// =====================================================================
 // 認証API: users テーブルを id + passcode で直接照合
 // =====================================================================
 export async function loginUser(
@@ -154,6 +176,11 @@ export async function saveLogApi(
 ): Promise<SaveLogResponse> {
   const { user_id, date, taskEvals, techniques } = payload;
 
+  // --- timestamptz 対応: 保存用の ISO 文字列へ正規化 ---
+  // date は YYYY-MM-DD（カレンダー指定）または undefined（当日）で渡ってくる。
+  // 以降、DB へ渡す日付はすべて isoDate（時刻付き ISO）に統一する。
+  const isoDate = resolveTimestamp(date);
+
   // --- 課題（自己評価）行を生成 ---
   let xpFromTasks = 0;
   const taskRows = (taskEvals ?? []).map((t) => {
@@ -161,7 +188,7 @@ export async function saveLogApi(
     xpFromTasks += xp;
     return {
       user_id,
-      date,
+      date:         isoDate,
       task_id:      t.task_id,
       score:        t.score,
       xp_earned:    xp,
@@ -177,7 +204,7 @@ export async function saveLogApi(
     xpFromTech += xp;
     return {
       user_id,
-      date,
+      date:         isoDate,
       technique_id: t.technique_id,
       quantity:     t.quantity,
       quality:      t.quality,
@@ -238,6 +265,7 @@ export async function saveLogApi(
   const newLevel = calcLevelFromXp(newTotal);
 
   // 行が存在しない場合に備え、update ではなく upsert で「無ければ作る」。
+  // last_practice_date も timestamptz 化済みの isoDate で更新する。
   const { error: updErr } = await supabase
     .from('user_status')
     .upsert(
@@ -245,7 +273,7 @@ export async function saveLogApi(
         user_id,
         total_xp:           newTotal,
         level:              newLevel,
-        last_practice_date: date,
+        last_practice_date: isoDate,
       },
       { onConflict: 'user_id' },
     );
@@ -255,7 +283,7 @@ export async function saveLogApi(
   if (earned > 0) {
     const { error: hisErr } = await supabase.from('xp_history').insert({
       user_id,
-      date,
+      date:           isoDate,
       type:           'gain',
       amount:         earned,
       reason:         '自己記録（課題・技）',
@@ -311,19 +339,34 @@ export async function saveTaskLog(
 export async function evaluateStudentApi(
   payload: Omit<TeacherEvalPayload, 'action'> & { teacher_id: string },
 ): Promise<TeacherEvalResponse> {
-  const { teacher_id, student_id, evaluations } = payload;
-  const today = new Date().toISOString().slice(0, 10);
+  const { teacher_id, student_id, date, evaluations } = payload;
 
-  // --- 当日すでに「この先生」が評価済みの課題は二重評価を避ける ---
-  // ★ 修正: 二重評価防止は先生ごとに独立させる。
-  //         以前は「evaluator_id が null でない行（＝全先生の評価）」で判定していたため、
-  //         先生Aが評価すると先生Bが同じ生徒を評価できなくなっていた。
-  //         evaluator_id = teacher_id に絞ることで、各先生が1日1回ずつ評価できる。
+  // --- timestamptz 対応: 評価対象日を ISO 文字列へ正規化 ---
+  // date 未指定なら当日、指定（YYYY-MM-DD）ならカレンダーからの遡り評価。
+  const isoDate = resolveTimestamp(date);
+
+  // --- 二重評価チェック用に「対象日の JST 0:00〜翌日 0:00」の範囲を算出 ---
+  // timestamptz カラムに対しては時刻まで一致させる .eq では判定できないため、
+  // 範囲検索（gte/lt）で「その1日」を切り出す。
+  // 基準日は date 指定があればそれ、無ければ isoDate を JST 日付へ戻して用いる。
+  const baseDay = (date && /^\d{4}-\d{2}-\d{2}$/.test(date))
+    ? date
+    : new Date(new Date(isoDate).getTime() + 9 * 60 * 60 * 1000)
+        .toISOString()
+        .slice(0, 10);
+  const dayStartIso = new Date(`${baseDay}T00:00:00+09:00`).toISOString();
+  const dayEndIso   = new Date(`${baseDay}T00:00:00+09:00`).getTime() + 24 * 60 * 60 * 1000;
+  const dayEndIsoStr = new Date(dayEndIso).toISOString();
+
+  // --- 対象日すでに「この先生」が評価済みの課題は二重評価を避ける ---
+  // ★ 二重評価防止は先生ごとに独立させる（evaluator_id = teacher_id で絞る）。
+  //   日付は timestamptz 化に伴い範囲検索（その日の0:00〜翌0:00）で判定する。
   const { data: existing, error: exErr } = await supabase
     .from('task_logs')
     .select('task_id')
     .eq('user_id', student_id)
-    .eq('date', today)
+    .gte('date', dayStartIso)
+    .lt('date', dayEndIsoStr)
     .eq('evaluator_id', teacher_id);
   throwIfError(exErr, 'evaluateStudent:existing');
 
@@ -339,7 +382,7 @@ export async function evaluateStudentApi(
       evaluatedCount += 1;
       return {
         user_id:      student_id,
-        date:         today,
+        date:         isoDate,
         task_id:      ev.task_id,
         score:        ev.score,
         xp_earned:    xp,
@@ -366,9 +409,9 @@ export async function evaluateStudentApi(
   const newLevel = calcLevelFromXp(newTotal);
 
   // 行が無い場合に備え、update ではなく upsert で「無ければ作る」。
-  // ★ 修正: 先生評価も「その日の稽古」とみなし、last_practice_date を today に更新する。
-  //         これを更新しないと、先生評価のみを受けている生徒が
-  //         「サボり（長期間未稽古）」と誤判定されてしまうため。
+  // ★ 先生評価も「その日の稽古」とみなし、last_practice_date を isoDate に更新する。
+  //   これを更新しないと、先生評価のみを受けている生徒が
+  //   「サボり（長期間未稽古）」と誤判定されてしまうため。
   const { error: updErr } = await supabase
     .from('user_status')
     .upsert(
@@ -376,7 +419,7 @@ export async function evaluateStudentApi(
         user_id:            student_id,
         total_xp:           newTotal,
         level:              newLevel,
-        last_practice_date: today,
+        last_practice_date: isoDate,
       },
       { onConflict: 'user_id' },
     );
@@ -385,7 +428,7 @@ export async function evaluateStudentApi(
   if (xpGranted > 0) {
     const { error: hisErr } = await supabase.from('xp_history').insert({
       user_id:        student_id,
-      date:           today,
+      date:           isoDate,
       type:           'teacher_eval',
       amount:         xpGranted,
       reason:         '先生からの評価',
@@ -410,6 +453,8 @@ export async function evaluateStudent(
   if (!me || me.role !== 'teacher') {
     throw new Error('先生としてログインしていません');
   }
+  // action のみ除去し、date を含む残りのフィールドをそのまま内部APIへ渡す。
+  // （date が undefined なら当日、YYYY-MM-DD ならカレンダーからの遡り評価）
   const { action: _action, ...rest } = payload;
   return evaluateStudentApi({
     ...rest,
@@ -427,6 +472,8 @@ export async function evaluateStudent(
 export interface BulkEvalPayload {
   /** 評価対象の生徒IDの配列（チェックボックスで選択された生徒） */
   student_ids: string[];
+  /** 評価対象日（YYYY-MM-DD）。未指定の場合は当日として扱う（カレンダーからの遡り評価に対応） */
+  date?:       string;
   /** 課題ごとの評価（全選択生徒に同じ評価を一括適用） */
   evaluations: Array<{
     task_id: string;
@@ -474,7 +521,24 @@ export interface BulkEvalResponse {
 export async function evaluateBulkStudentsApi(
   payload: BulkEvalPayload & { teacher_id: string },
 ): Promise<BulkEvalResponse> {
-  const { teacher_id, student_ids, evaluations } = payload;
+  const { teacher_id, student_ids, date, evaluations } = payload;
+
+  // --- timestamptz 対応: 評価対象日を ISO 文字列へ正規化 ---
+  // date 未指定なら当日、指定（YYYY-MM-DD）ならカレンダーからの遡り評価。
+  const isoDate = resolveTimestamp(date);
+
+  // --- 二重評価チェック用に「対象日の JST 0:00〜翌日 0:00」の範囲を算出 ---
+  // timestamptz カラムに対しては .eq では判定できないため範囲検索（gte/lt）を用いる。
+  // 基準日は date 指定があればそれ、無ければ isoDate を JST 日付へ戻して用いる。
+  const baseDay = (date && /^\d{4}-\d{2}-\d{2}$/.test(date))
+    ? date
+    : new Date(new Date(isoDate).getTime() + 9 * 60 * 60 * 1000)
+        .toISOString()
+        .slice(0, 10);
+  const dayStartIso = new Date(`${baseDay}T00:00:00+09:00`).toISOString();
+  const dayEndIsoStr = new Date(
+    new Date(`${baseDay}T00:00:00+09:00`).getTime() + 24 * 60 * 60 * 1000,
+  ).toISOString();
 
   const results: BulkEvalResponse['results'] = [];
   const failures: BulkEvalResponse['failures'] = [];
@@ -484,21 +548,24 @@ export async function evaluateBulkStudentsApi(
 
   for (const sid of student_ids) {
     try {
-      // 評価前の二重チェック件数を把握するため、当日先生評価済みを取得
-      const today = new Date().toISOString().slice(0, 10);
+      // 評価前の二重チェック件数を把握するため、対象日に先生評価済みの課題を取得。
       // 自己記録は evaluator_id = null。先生評価は「null でない行」で判定する。
+      // 日付は timestamptz 化に伴い範囲検索（その日の0:00〜翌0:00）で判定する。
       const { data: existing } = await supabase
         .from('task_logs')
         .select('task_id')
         .eq('user_id', sid)
-        .eq('date', today)
+        .gte('date', dayStartIso)
+        .lt('date', dayEndIsoStr)
         .not('evaluator_id', 'is', null);
       const already = new Set((existing ?? []).map((e) => e.task_id));
       const skipped = evaluations.filter((ev) => already.has(ev.task_id)).length;
 
+      // ★ 個別評価APIへ date を引き渡すことで、保存日・二重評価判定を対象日に統一する。
       const res = await evaluateStudentApi({
         teacher_id,
         student_id:  sid,
+        date,
         evaluations,
       });
 
@@ -584,9 +651,11 @@ export async function evaluateBulkStudents(
   // 重複student_idを除去
   const uniqueIds = Array.from(new Set(payload.student_ids));
 
+  // ★ date を内部APIへ引き渡す（undefined なら当日、YYYY-MM-DD なら遡り評価）。
   return evaluateBulkStudentsApi({
     teacher_id:  me.id,
     student_ids: uniqueIds,
+    date:        payload.date,
     evaluations: payload.evaluations,
   });
 }
