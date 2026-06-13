@@ -13,6 +13,7 @@ import { useRouter } from 'next/navigation';
 import {
   useMyTeacherDashboardSWR,
   evaluateBulkStudents,
+  useEvaluatedStudentIdsByDateSWR,
 } from '@/lib/api';
 import { getAuthUser } from '@/lib/auth';
 import { THEME } from '@/types';
@@ -64,6 +65,7 @@ export default function TeacherBulkEvalPage() {
   }, [router]);
 
   const user = typeof window !== 'undefined' ? getAuthUser() : null;
+  const teacherId = user?.role === 'teacher' ? user.id : null;
 
   // -----------------------------------------------------------------
   // データ取得
@@ -85,6 +87,35 @@ export default function TeacherBulkEvalPage() {
   const [expandedCommentTaskId, setExpandedCommentTaskId] = useState<string | null>(null);
 
   // -----------------------------------------------------------------
+  // ★ 追加: 選択日（evalDate）基準の「評価済み生徒ID」を取得。
+  //         evalDate が変わるたびに自動で再取得され、二重評価を防止する。
+  // -----------------------------------------------------------------
+  const {
+    data: evaluatedStudentIdsForDate,
+    mutate: mutateEvaluatedStudentIds,
+  } = useEvaluatedStudentIdsByDateSWR(teacherId, evalDate);
+
+  // ★ 追加: 評価済み生徒IDが更新されたら、選択中リストから自動的に取り除く。
+  //         （日付を切り替えた際、その日すでに評価済みの生徒が選択に残らないように）
+  useEffect(() => {
+    if (!evaluatedStudentIdsForDate || evaluatedStudentIdsForDate.length === 0) {
+      return;
+    }
+    const evaluatedSet = new Set(evaluatedStudentIdsForDate);
+    setSelectedIds((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const id of prev) {
+        if (evaluatedSet.has(id)) {
+          next.delete(id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [evaluatedStudentIdsForDate]);
+
+  // -----------------------------------------------------------------
   // XP合計プレビュー（スコア × ベース5 × 倍率5 → 1人あたりXP）
   // -----------------------------------------------------------------
   const xpPreview = useMemo(() => {
@@ -101,6 +132,11 @@ export default function TeacherBulkEvalPage() {
   // ハンドラ：生徒選択
   // -----------------------------------------------------------------
   const toggleStudent = (studentId: string) => {
+    // ★ 追加: 選択日にすでに評価済みの生徒は選択させない（二重評価防止）。
+    const evaluatedSet = new Set(evaluatedStudentIdsForDate ?? []);
+    if (evaluatedSet.has(studentId)) {
+      return;
+    }
     setSelectedIds(prev => {
       const next = new Set(prev);
       if (next.has(studentId)) {
@@ -114,10 +150,12 @@ export default function TeacherBulkEvalPage() {
 
   const toggleAll = () => {
     if (!data) return;
-    // ★ 修正: 評価済み（evaluated_today_by_me）の生徒は選択対象から除外する。
-    //         disabled な生徒まで選択してしまうとUIと送信挙動が食い違うため。
+    // ★ 修正: 評価済み判定を「選択日（evalDate）基準」に変更する。
+    //         本日固定の evaluated_today_by_me ではなく、
+    //         選択した日付に対してこの先生が評価済みの生徒を除外する。
+    const evaluatedSet = new Set(evaluatedStudentIdsForDate ?? []);
     const selectableIds = data.students
-      .filter((s) => !s.evaluated_today_by_me)
+      .filter((s) => !evaluatedSet.has(s.user_id))
       .map((s) => s.user_id);
 
     // すでに選択可能な全員が選ばれていれば全解除、そうでなければ全選択。
@@ -192,31 +230,33 @@ export default function TeacherBulkEvalPage() {
           };
         });
 
-      await evaluateBulkStudents({
-        student_ids: Array.from(selectedIds),
-        // ★ 追加: 選択中の評価対象日を渡す（全選択生徒に同じ日付で一括適用）。
-        date:        evalDate,
-        evaluations,
-      });
-
-      const grantedCount = selectedIds.size;
-      const grantedXp    = xpPreview;
-
-      setTaskScores({});
-      setTaskComments({});
-      setSelectedIds(new Set());
-      setExpandedCommentTaskId(null);
-
-      setSuccess({ xp: grantedXp, count: grantedCount });
-
-      mutate();
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : '評価の送信に失敗しました');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
+        await evaluateBulkStudents({
+          student_ids: Array.from(selectedIds),
+          // ★ 追加: 選択中の評価対象日を渡す（全選択生徒に同じ日付で一括適用）。
+          date:        evalDate,
+          evaluations,
+        });
+  
+        const grantedCount = selectedIds.size;
+        const grantedXp    = xpPreview;
+  
+        setTaskScores({});
+        setTaskComments({});
+        setSelectedIds(new Set());
+        setExpandedCommentTaskId(null);
+  
+        setSuccess({ xp: grantedXp, count: grantedCount });
+  
+        mutate();
+        // ★ 追加: 選択日の評価済み生徒IDを再取得し、即座に二重評価を防ぐ。
+        mutateEvaluatedStudentIds();
+      } catch (err) {
+        setSubmitError(err instanceof Error ? err.message : '評価の送信に失敗しました');
+      } finally {
+        setSubmitting(false);
+      }
+    };
+  
   const handleSuccessContinue = () => {
     setSuccess(null);
   };
@@ -262,8 +302,13 @@ export default function TeacherBulkEvalPage() {
   const taskMaster = data.taskMaster ?? [];
   const sortedTasks = [...taskMaster].sort((a, b) => a.display_order  - b.display_order );
 
-  // ★ 修正: 選択可能（未評価）な生徒だけを「全員選択」の母数とする。
-  const selectableStudents = data.students.filter((s) => !s.evaluated_today_by_me);
+  // ★ 修正: 評価済み判定を「選択日（evalDate）基準」に変更する。
+  //         本日固定の evaluated_today_by_me ではなく、
+  //         選択した日付にこの先生が評価済みの生徒を母数から除外する。
+  const evaluatedStudentSet = new Set(evaluatedStudentIdsForDate ?? []);
+  const selectableStudents = data.students.filter(
+    (s) => !evaluatedStudentSet.has(s.user_id),
+  );
   const allSelected =
     selectableStudents.length > 0 &&
     selectableStudents.every((s) => selectedIds.has(s.user_id));
@@ -346,8 +391,9 @@ export default function TeacherBulkEvalPage() {
 
           <div style={styles.studentGrid}>
             {data.students.map((s) => {
-              // ★ 追加: 本日この先生が評価済みの生徒は選択不可
-              const isDone = !!s.evaluated_today_by_me;
+              // ★ 修正: 「選択日（evalDate）基準」でこの先生が評価済みかを判定する。
+              //         本日固定の evaluated_today_by_me ではなく、選択日の評価済みを参照。
+              const isDone = evaluatedStudentSet.has(s.user_id);
               const isSelected = !isDone && selectedIds.has(s.user_id);
               return (
                 <label

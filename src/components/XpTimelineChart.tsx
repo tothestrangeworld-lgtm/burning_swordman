@@ -80,13 +80,13 @@ function CustomTooltip({
       background:   '#FFFFFF',
       border:       `2px solid ${THEME.primary}`,
       borderRadius: 10,
-      color:        THEME.text,
+      color:        '#333333',
       fontSize:     12,
       padding:      '10px 14px',
-      lineHeight:   1.7,
+      lineHeight:   1.4,
       boxShadow:    '0 4px 12px rgba(178,34,34,0.2)',
     }}>
-      <div style={{ color: THEME.textMuted, marginBottom: 2, fontSize: 11 }}>{label}</div>
+      <div style={{ color: '#666666', marginBottom: 2, fontSize: 11 }}>{label}</div>
       <div style={{
         color:           '#FFFFFF',
         backgroundColor: THEME.primary,
@@ -106,12 +106,19 @@ function CustomTooltip({
         累計 {xp.toLocaleString()} XP
       </div>
       {level !== undefined && level > 0 && (
-        <div style={{ color: THEME.textMuted, fontSize: 11 }}>
+        <div style={{ color: '#666666', fontSize: 11 }}>
           修行度 Lv.{level}
         </div>
       )}
       {reason && (
-        <div style={{ color: THEME.textMuted, fontSize: 10, marginTop: 4, maxWidth: 200 }}>
+        <div style={{
+          color:      '#333333',
+          fontSize:   10,
+          marginTop:  4,
+          maxWidth:   200,
+          whiteSpace: 'pre-wrap',
+          lineHeight: 1.4,
+        }}>
           {reason}
         </div>
       )}

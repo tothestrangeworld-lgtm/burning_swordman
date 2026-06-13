@@ -14,6 +14,7 @@ import {
   useStudentDetailSWR,
   evaluateStudent,
   useMyTeacherDashboardSWR,
+  useEvaluatedTaskIdsByDateSWR,
 } from '@/lib/api';
 import { getAuthUser } from '@/lib/auth';
 import {
@@ -125,6 +126,15 @@ export default function TeacherEvalPage() {
   const [expandedCommentTaskId, setExpandedCommentTaskId] = useState<string | null>(null);
 
   // -----------------------------------------------------------------
+  // ★ 追加: 選択日（evalDate）基準の「評価済みタスクID」を取得。
+  //         evalDate が変わるたびに自動で再取得され、二重評価を防止する。
+  // -----------------------------------------------------------------
+  const {
+    data: evaluatedTaskIdsForDate,
+    mutate: mutateEvaluatedTaskIds,
+  } = useEvaluatedTaskIdsByDateSWR(teacherId, studentId, evalDate);
+
+  // -----------------------------------------------------------------
   // XP合計プレビュー
   // -----------------------------------------------------------------
   const xpPreview = useMemo(() => {
@@ -210,6 +220,8 @@ export default function TeacherEvalPage() {
 
       mutate();
       mutateTeacherList();
+      // ★ 追加: 選択日の評価済みタスクIDを再取得し、即座に二重評価を防ぐ。
+      mutateEvaluatedTaskIds();
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : '評価の送信に失敗しました');
     } finally {
@@ -259,10 +271,14 @@ export default function TeacherEvalPage() {
     );
   }
 
-  const { student, status, taskMaster, recentLogs, todayEvaluatedTaskIds = [] } = data;
+  const { student, status, taskMaster, recentLogs } = data;
   const titleMaster: TitleMasterEntry[] = data.titleMaster ?? [];
   const sortedTasks = [...taskMaster].sort((a, b) => a.display_order - b.display_order);
-  const evaluableTasks = sortedTasks.filter(t => !todayEvaluatedTaskIds.includes(t.id));
+  // ★ 修正: 本日固定の todayEvaluatedTaskIds ではなく、
+  //         選択日（evalDate）基準で取得した評価済みタスクIDを使う。
+  //         これにより「選んだ日付にすでに評価済みなら二重評価できない」を実現する。
+  const evaluatedTaskIds = evaluatedTaskIdsForDate ?? [];
+  const evaluableTasks = sortedTasks.filter(t => !evaluatedTaskIds.includes(t.id));
   const allTasksDone = evaluableTasks.length === 0;
   const lvColor = levelColor(status.level);
   const title   = titleForLevel(status.level, titleMaster);
@@ -389,9 +405,11 @@ export default function TeacherEvalPage() {
           <div style={styles.allDoneBox}>
             <span style={styles.allDoneIcon}>✅</span>
             <div>
-              <div style={styles.allDoneTitle}>きょうは評価済み！</div>
+              <div style={styles.allDoneTitle}>
+                {evalDate === getTodayLocal() ? 'きょうは評価済み！' : 'この日はすべて評価済み！'}
+              </div>
               <div style={styles.allDoneDetail}>
-                すべての課題を評価しました。明日また稽古を見守ろう。
+                {evalDate} のすべての課題を評価しました。別の日付を選ぶこともできます。
               </div>
             </div>
           </div>
@@ -414,7 +432,7 @@ export default function TeacherEvalPage() {
                 taskId={task.id}
                 taskText={task.task_text}
                 score={taskScores[task.id] ?? 0}
-                alreadyEvaluated={todayEvaluatedTaskIds.includes(task.id)}
+                alreadyEvaluated={evaluatedTaskIds.includes(task.id)}
                 onChange={(score) => handleScoreChange(task.id, score)}
                 criteriaExpanded={expandedTaskId === task.id}
                 onToggleCriteria={() =>

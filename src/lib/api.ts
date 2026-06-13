@@ -99,6 +99,28 @@ function resolveTimestamp(date?: string): string {
 }
 
 // =====================================================================
+// 共通: 指定日（YYYY-MM-DD）の「JST 0:00〜翌日 0:00」を ISO 範囲で返す。
+// -------------------------------------------------------------------
+// timestamptz カラムは .eq では時刻まで一致しないと判定できないため、
+// 「その1日」を切り出すには範囲検索（gte/lt）が必須。
+// date 未指定・不正値の場合は当日（JST）を基準にする。
+// =====================================================================
+function resolveDayRange(date?: string): { startIso: string; endIso: string } {
+  // 基準日（YYYY-MM-DD）を確定する。
+  const baseDay = (date && /^\d{4}-\d{2}-\d{2}$/.test(date))
+    ? date
+    // 当日を JST 基準で算出（UTC 変換で前日へズレないよう +9h してから切り出す）。
+    : new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  const startIso = new Date(`${baseDay}T00:00:00+09:00`).toISOString();
+  const endIso = new Date(
+    new Date(`${baseDay}T00:00:00+09:00`).getTime() + 24 * 60 * 60 * 1000,
+  ).toISOString();
+
+  return { startIso, endIso };
+}
+
+// =====================================================================
 // 認証API: users テーブルを id + passcode で直接照合
 // =====================================================================
 export async function loginUser(
@@ -1233,6 +1255,120 @@ export async function fetchStudentDetail(
     techniques,
     todayEvaluatedTaskIds,
   };
+}
+
+// =====================================================================
+// ★ 指定日に「この先生」が評価済みの課題ID一覧を取得（個別評価の二重防止用）
+// -------------------------------------------------------------------
+// 先生が評価対象日を変更するたびに呼び出し、その日の評価済みタスクを反映する。
+// 評価は先生ごとに独立しているため evaluator_id = teacherId で絞る。
+// 日付は timestamptz 化に伴い範囲検索（その日の0:00〜翌0:00）で判定する。
+// =====================================================================
+export async function fetchEvaluatedTaskIdsByDate(
+  teacherId: string,
+  studentId: string,
+  date: string,
+): Promise<string[]> {
+  if (!teacherId || !studentId || !date) {
+    return [];
+  }
+
+  const { startIso, endIso } = resolveDayRange(date);
+
+  const { data, error } = await supabase
+    .from('task_logs')
+    .select('task_id')
+    .eq('user_id', studentId)
+    .eq('evaluator_id', teacherId)
+    .gte('date', startIso)
+    .lt('date', endIso);
+
+  throwIfError(error, 'fetchEvaluatedTaskIdsByDate');
+
+  // 重複を除いた task_id 配列で返す。
+  return Array.from(new Set((data ?? []).map((r) => r.task_id)));
+}
+
+// =====================================================================
+// SWRフック: 指定日の評価済みタスクID（個別評価画面用）
+// key に date を含めるため、日付変更で自動再取得される。
+// =====================================================================
+export function useEvaluatedTaskIdsByDateSWR(
+  teacherId: string | null | undefined,
+  studentId: string | null | undefined,
+  date: string | null | undefined,
+): SWRResponse<string[], Error> {
+  const key = (teacherId && studentId && date)
+    ? buildKey('getEvaluatedTaskIdsByDate', {
+        teacher_id: teacherId,
+        student_id: studentId,
+        date,
+      })
+    : null;
+
+  return useSWR<string[], Error>(
+    key,
+    async () => fetchEvaluatedTaskIdsByDate(teacherId!, studentId!, date!),
+    {
+      ...SWR_BASE_CONFIG,
+      dedupingInterval: SWR_DEDUP.STUDENT_DETAIL,
+    },
+  );
+}
+
+// =====================================================================
+// ★ 指定日に「この先生」が評価済みの生徒ID一覧を取得（一括評価の二重防止用）
+// -------------------------------------------------------------------
+// 先生が評価対象日を変更するたびに呼び出し、その日の評価済み生徒を反映する。
+// 評価は先生ごとに独立しているため evaluator_id = teacherId で絞る。
+// 日付は timestamptz 化に伴い範囲検索（その日の0:00〜翌0:00）で判定する。
+// =====================================================================
+export async function fetchEvaluatedStudentIdsByDate(
+  teacherId: string,
+  date: string,
+): Promise<string[]> {
+  if (!teacherId || !date) {
+    return [];
+  }
+
+  const { startIso, endIso } = resolveDayRange(date);
+
+  const { data, error } = await supabase
+    .from('task_logs')
+    .select('user_id')
+    .eq('evaluator_id', teacherId)
+    .gte('date', startIso)
+    .lt('date', endIso);
+
+  throwIfError(error, 'fetchEvaluatedStudentIdsByDate');
+
+  // 重複を除いた user_id 配列で返す。
+  return Array.from(new Set((data ?? []).map((r) => r.user_id)));
+}
+
+// =====================================================================
+// SWRフック: 指定日の評価済み生徒ID（一括評価画面用）
+// key に date を含めるため、日付変更で自動再取得される。
+// =====================================================================
+export function useEvaluatedStudentIdsByDateSWR(
+  teacherId: string | null | undefined,
+  date: string | null | undefined,
+): SWRResponse<string[], Error> {
+  const key = (teacherId && date)
+    ? buildKey('getEvaluatedStudentIdsByDate', {
+        teacher_id: teacherId,
+        date,
+      })
+    : null;
+
+  return useSWR<string[], Error>(
+    key,
+    async () => fetchEvaluatedStudentIdsByDate(teacherId!, date!),
+    {
+      ...SWR_BASE_CONFIG,
+      dedupingInterval: SWR_DEDUP.TEACHER_LIST,
+    },
+  );
 }
 
 // =====================================================================
