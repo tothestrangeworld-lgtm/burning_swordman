@@ -63,7 +63,7 @@ export default function StatusCard({ userName, status, titleMaster, xpHistory = 
 
       <div style={styles.xpBarArea}>
         <div style={styles.xpBarLabels}>
-          <span style={styles.xpLabel}>つぎの修行まで</span>
+          <span style={styles.xpLabel}>つぎのレベルまで</span>
           <span style={styles.xpValue}>
             あと <strong style={{ color: THEME.accent }}>{xpToNext}</strong> XP
           </span>

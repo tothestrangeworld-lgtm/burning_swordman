@@ -98,7 +98,7 @@ export default function TeacherTaskRater({
         </div>
         {disabled && (
           <span style={styles.evaluatedBadge}>
-            ✅ 評価ずみ
+            ✅ 評価済
           </span>
         )}
       </div>
@@ -213,7 +213,7 @@ export default function TeacherTaskRater({
 
       {disabled && (
         <div style={styles.disabledMsg}>
-          きょうはもう評価済みだ。あすまた稽古を見よう。
+          今日はもう評価済み。明日また稽古を見よう。
         </div>
       )}
     </div>

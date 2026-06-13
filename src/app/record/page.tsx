@@ -219,7 +219,7 @@ export default function RecordPage() {
 
       // ★ 追加: 重複除外の結果、記録対象が何も残らなければエラー表示して中断。
       if (taskEvals.length === 0 && techniques.length === 0) {
-        setSubmitError('この日にきろくできる課題や技がありません');
+        setSubmitError('この日に記録できる課題や技がありません');
         setSubmitting(false);
         return;
       }
@@ -314,7 +314,7 @@ export default function RecordPage() {
         <section style={styles.introCard}>
           <div style={styles.introIcon}>⚔️</div>
           <h2 style={styles.introTitle}>
-            今日の稽古をきろくしよう！
+            今日の稽古を記録しよう！
           </h2>
           <p style={styles.introSub}>
             できたところを ★ でつけて、技は「量」と「質」で記録だ！
@@ -341,9 +341,9 @@ export default function RecordPage() {
         <section style={styles.section}>
           <div style={styles.sectionHeader}>
             <span style={styles.sectionIcon}>📜</span>
-            <h3 style={styles.sectionTitle}>きょうの課題</h3>
+            <h3 style={styles.sectionTitle}>課題</h3>
             <span style={styles.sectionCount}>
-              {inputCount.taskCount}/{sortedTasks.length} 評価ずみ
+              {inputCount.taskCount}/{sortedTasks.length} 評価済
             </span>
           </div>
 
@@ -395,9 +395,9 @@ export default function RecordPage() {
         <section style={styles.section}>
           <div style={styles.sectionHeader}>
             <span style={styles.sectionIcon}>⚔️</span>
-            <h3 style={styles.sectionTitle}>きょうの技</h3>
+            <h3 style={styles.sectionTitle}>技</h3>
             <span style={styles.sectionCount}>
-              {inputCount.techCount}/{sortedTechs.length} 記録ずみ
+              {inputCount.techCount}/{sortedTechs.length} 記録済
             </span>
           </div>
 

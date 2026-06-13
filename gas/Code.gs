@@ -329,7 +329,7 @@ function updatePasscode(payload) {
     throw new Error('剣士IDが指定されていません');
   }
   if (!newPasscode) {
-    throw new Error('あたらしいあいことばを入力してください');
+    throw new Error('新しいあいことばを入力してください');
   }
   if (newPasscode.length < 1 || newPasscode.length > 20) {
     throw new Error('あいことばは1〜20文字で入力してください');

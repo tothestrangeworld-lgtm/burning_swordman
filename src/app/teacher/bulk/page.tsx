@@ -273,7 +273,7 @@ export default function TeacherBulkEvalPage() {
     return (
       <div style={styles.loadingBox}>
         <div style={styles.loadingFlame}>⚔️</div>
-        <p style={styles.loadingText}>道場のきろくを呼び出し中…</p>
+        <p style={styles.loadingText}>道場の記録を呼び出し中…</p>
         <style>{`
           @keyframes burning_load_flame {
             0%, 100% { transform: scale(1) rotate(-3deg); }
@@ -455,7 +455,7 @@ export default function TeacherBulkEvalPage() {
         </section>
 
         {/* 区切り：課題評価 */}
-        <Divider label="📝 きょうの評価" />
+        <Divider label="📝 評価" />
 
         {/* 課題評価リスト */}
         <section style={styles.taskSection}>

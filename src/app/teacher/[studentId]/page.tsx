@@ -245,7 +245,7 @@ export default function TeacherEvalPage() {
     return (
       <div style={styles.loadingBox}>
         <div style={styles.loadingFlame}>⚔</div>
-        <p style={styles.loadingText}>門下生のきろくを呼び出し中…</p>
+        <p style={styles.loadingText}>門下生の記録を呼び出し中…</p>
         <style>{`
           @keyframes burning_load_flame {
             0%, 100% { transform: scale(1) rotate(-3deg); }
@@ -398,7 +398,7 @@ export default function TeacherEvalPage() {
         )}
 
         {/* 区切り */}
-        <Divider label="📝 きょうの評価" />
+        <Divider label="📝 評価" />
 
         {/* 全評価済みアラート */}
         {allTasksDone && (
@@ -406,7 +406,7 @@ export default function TeacherEvalPage() {
             <span style={styles.allDoneIcon}>✅</span>
             <div>
               <div style={styles.allDoneTitle}>
-                {evalDate === getTodayLocal() ? 'きょうは評価済み！' : 'この日はすべて評価済み！'}
+                {evalDate === getTodayLocal() ? '今日は評価済み！' : 'この日はすべて評価済み！'}
               </div>
               <div style={styles.allDoneDetail}>
                 {evalDate} のすべての課題を評価しました。別の日付を選ぶこともできます。

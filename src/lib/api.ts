@@ -2003,7 +2003,7 @@ export async function updateUserPasscode(
     throw new Error('ログイン情報が見つかりません');
   }
   if (!next) {
-    throw new Error('あたらしいあいことばを入力してください');
+    throw new Error('新しいあいことばを入力してください');
   }
   if (next.length < 1 || next.length > 20) {
     throw new Error('あいことばは1〜20文字で入力してください');

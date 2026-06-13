@@ -132,7 +132,7 @@ export default function StudentDashboardPage() {
           <span style={styles.recordCtaIcon}>📝</span>
           <span style={styles.recordCtaText}>
             <span style={styles.recordCtaMain}>今日の修行を記録する</span>
-            <span style={styles.recordCtaSub}>稽古をきろくして経験値ゲット！</span>
+            <span style={styles.recordCtaSub}>稽古を記録して経験値ゲット！</span>
           </span>
           <span style={styles.recordCtaFlame}>🔥</span>
         </button>
@@ -155,7 +155,7 @@ export default function StudentDashboardPage() {
         )}
 
         {/* 区切り */}
-        <Divider label="📜 修行のきろく" />
+        <Divider label="📜 修行の記録" />
 
         {/* ② 通知表 */}
         <TaskReportCard
@@ -184,7 +184,7 @@ export default function StudentDashboardPage() {
           onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
         >
           <span style={{ fontSize: '20px' }}>⚔️</span>
-          <span>修行をきろくする</span>
+          <span>修行を記録する</span>
           <span style={{ fontSize: '18px' }}>🔥</span>
         </button>
 
@@ -236,7 +236,7 @@ function DashboardSkeleton() {
         {/* ロゴ */}
         <div style={styles.skeletonLogo}>
           <div style={styles.skeletonFlame}>🔥</div>
-          <h2 style={styles.skeletonTitle}>修行のきろくを呼び出し中…</h2>
+          <h2 style={styles.skeletonTitle}>修行の記録を呼び出し中…</h2>
           <div style={styles.skeletonSpinner} />
         </div>
 

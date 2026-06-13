@@ -129,8 +129,8 @@ export default function SettingsPage() {
         {/* ヘッダー */}
         <header style={styles.hero}>
           <div style={styles.heroIcon}>⚙️</div>
-          <h1 style={styles.heroTitle}>あいことばの へんこう</h1>
-          <p style={styles.heroSub}>🔑 あたらしい あいことばを きめよう</p>
+          <h1 style={styles.heroTitle}>あいことばの 変更</h1>
+          <p style={styles.heroSub}>🔑 新しい あいことばを 決めよう</p>
         </header>
 
         {/* メインカード */}
@@ -152,7 +152,7 @@ export default function SettingsPage() {
 
             {/* 新しいあいことば */}
             <label htmlFor="new-pass" style={styles.label}>
-              🆕 あたらしい あいことば
+              🆕 新しい あいことば
             </label>
             <input
               id="new-pass"
@@ -173,7 +173,7 @@ export default function SettingsPage() {
 
             {/* もういちど入力 */}
             <label htmlFor="confirm-pass" style={{ ...styles.label, marginTop: 14 }}>
-              🔁 もういちど 入力
+              🔁 もう一度 入力
             </label>
             <input
               id="confirm-pass"
@@ -185,7 +185,7 @@ export default function SettingsPage() {
                 setConfirmPass(e.target.value);
                 setErrorMsg('');
               }}
-              placeholder="もういちど おなじものを"
+              placeholder="もう一度 同じものを"
               style={{
                 ...styles.input,
                 ...(mismatch ? styles.inputError : {}),
@@ -200,7 +200,7 @@ export default function SettingsPage() {
               <p style={styles.matchHint}>
                 {mismatch ? (
                   <span style={{ color: '#FF8888' }}>
-                    ❌ まだ ちがうみたい…
+                    ❌ まだ 違うみたい…
                   </span>
                 ) : (
                   <span style={{ color: '#7CFC9A' }}>
@@ -238,12 +238,12 @@ export default function SettingsPage() {
               {submitting ? (
                 <>
                   <span style={styles.btnSpinner} aria-hidden="true" />
-                  <span>へんこう中…</span>
+                  <span>変更中…</span>
                 </>
               ) : (
                 <>
                   <span style={styles.btnIcon}>🔑</span>
-                  <span>あいことばを かえる</span>
+                  <span>あいことばを 変える</span>
                   <span style={styles.btnSubIcon}>🔥</span>
                 </>
               )}
@@ -279,13 +279,13 @@ export default function SettingsPage() {
             <div style={styles.successEmoji}>🎉</div>
             <h2 style={styles.successTitle}>あいことばを 変更したぞ！</h2>
             <p style={styles.successText}>
-              つぎの ログインから<br />
-              あたらしい あいことばを つかってね 🔑
+              次の ログインから<br />
+              新しいあいことばを つかってね 🔑
             </p>
 
             <div style={styles.successNote}>
               <span style={styles.successNoteIcon}>💡</span>
-              <span>あいことばは ぜったいに わすれないようにね！</span>
+              <span>あいことばは 絶対に 忘れないようにね！</span>
             </div>
 
             <button

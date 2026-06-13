@@ -300,7 +300,7 @@ function RankingChart({ history }: RankingChartProps) {
               labelStyle={{ color: '#FFD700', fontWeight: 700 }}
               formatter={(value, name) => {
                 if (value === null || value === undefined) {
-                  return ['きろくなし', name as string];
+                  return ['記録なし', name as string];
                 }
                 return [`${value}秒`, name as string];
               }}
@@ -673,7 +673,7 @@ export default function StudentMiniGamePage() {
             <ArrowLeft size={20} />
           </button>
         ) : (
-          <Link href="/student" className="mikiri-back" aria-label="もどる">
+          <Link href="/" className="mikiri-back" aria-label="もどる">
             <ArrowLeft size={20} />
           </Link>
         )}
@@ -681,7 +681,7 @@ export default function StudentMiniGamePage() {
           <span className="mikiri-title-main">⚔️ 刹那ノ見切 ⚔️</span>
           <span className="mikiri-title-sub">🔥 相手の動きを見ぬけ！ 🔥</span>
         </h1>
-        <div className="mikiri-counter" aria-label="きょうの挑戦回数">
+        <div className="mikiri-counter" aria-label="今日の挑戦回数">
           <span className="counter-num">{pad2(matchCount)}</span>
           <span className="counter-sep">/</span>
           <span className="counter-max">{pad2(MAX_MATCHES_PER_DAY)}</span>
@@ -762,7 +762,7 @@ export default function StudentMiniGamePage() {
 
               {phase === 'locked' ? (
                 <div className="menu-locked">
-                  🌙 きょうの特訓はおしまい！<br />また明日チャレンジしようね！✨
+                  🌙 今日の特訓はおしまい！<br />また明日チャレンジしようね！✨
                 </div>
               ) : (
                 <button
@@ -806,10 +806,10 @@ export default function StudentMiniGamePage() {
             <div className="console-box console-box--records">
               <div className="kanji-watermark" aria-hidden="true">記録</div>
 
-              <div className="console-prompt">📖 じぶんの修行きろく</div>
+              <div className="console-prompt">📖 じぶんの修行記録</div>
 
               <div className="menu-header menu-header--records">
-                <h2 className="menu-title-jp-main">📖 修行きろく</h2>
+                <h2 className="menu-title-jp-main">📖 修行記録</h2>
                 <p className="menu-title-jp-sub">✨ これまでのがんばり ✨</p>
               </div>
 
@@ -823,7 +823,7 @@ export default function StudentMiniGamePage() {
               </div>
 
               <div className="data-row">
-                <span className="data-key">⚔️ きょうの挑戦</span>
+                <span className="data-key">⚔️ 今日の挑戦</span>
                 <span className="data-val">{pad2(matchCount)} / {pad2(MAX_MATCHES_PER_DAY)} 回</span>
               </div>
 
@@ -834,7 +834,7 @@ export default function StudentMiniGamePage() {
 
               {statusInfo?.locked && (
                 <div className="locked-bar">
-                  🌙 きょうの特訓はおしまい！また明日ね✨
+                  🌙 今日の特訓はおしまい！また明日ね✨
                 </div>
               )}
 
@@ -944,7 +944,7 @@ export default function StudentMiniGamePage() {
               <div className="console-prompt">📝 記録中…🔥</div>
               <div className="loading-row">
                 <Loader2 size={20} className="animate-spin" />
-                <span className="loading-text">けっか をきろく中<span className="dots">...</span></span>
+                <span className="loading-text">けっか を記録中<span className="dots">...</span></span>
               </div>
             </div>
           </div>
@@ -987,7 +987,7 @@ export default function StudentMiniGamePage() {
                 </div>
               )}
               {!lastSaveResult && errorMessage && (
-                <p className="summary-error">😣 きろく失敗: {errorMessage}</p>
+                <p className="summary-error">😣 記録失敗: {errorMessage}</p>
               )}
 
               <div className="summary-rounds">
@@ -1013,7 +1013,7 @@ export default function StudentMiniGamePage() {
               ) : (
                 <>
                   <div className="locked-bar">
-                    🌙 きょうの特訓はここまで！おつかれさま✨
+                    🌙 今日の特訓はここまで！おつかれさま✨
                   </div>
                   <button className="cyber-btn cyber-btn--secondary" onClick={handleBackToMenu} type="button">
                     ⬅️ メニューにもどる

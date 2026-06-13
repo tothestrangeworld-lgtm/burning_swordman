@@ -1,6 +1,6 @@
 // src/components/TaskReportCard.tsx
 // =====================================================================
-// 燃えろ剣士 - 修行のきろく（通知表）
+// 燃えろ剣士 - 修行の記録（通知表）
 // 自己評価・先生評価の2行★表示 ＋ 課題別コメントアコーディオン
 // =====================================================================
 
@@ -142,7 +142,7 @@ function renderDiscreteStars(
   if (n === 0) {
     return <span style={styles.noStar}>—</span>;
   }
-  const filledColor = variant === 'teacher' ? '#FFB400' : 'rgba(255,180,170,0.55)';
+  const filledColor = variant === 'teacher' ? '#FFB400' : 'rgba(255, 255, 255, 0.74)';
   const emptyColor  = 'rgba(255,255,255,0.15)';
 
   return (
@@ -202,7 +202,7 @@ export default function TaskReportCard({
     <section style={styles.card}>
       <header style={styles.header}>
         <span style={styles.headerIcon}>📜</span>
-        <h3 style={styles.title}>修行のきろく</h3>
+        <h3 style={styles.title}>修行の記録</h3>
         <span style={styles.windowBadge}>直近{windowDays}日</span>
       </header>
 
