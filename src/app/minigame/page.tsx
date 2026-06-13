@@ -1164,8 +1164,8 @@ export default function StudentMiniGamePage() {
         }
         @keyframes kenshiOkori {
           0% { transform: translateY(0) scale(1); filter: drop-shadow(0 0 12px rgba(255, 215, 0, 0.4)); }
-          40% { transform: translateY(1.5px) scale(1.005); filter: drop-shadow(0 0 16px rgba(255, 120, 60, 0.6)); }
-          100% { transform: translateY(3px) scale(1.015); filter: drop-shadow(0 0 22px rgba(255, 80, 60, 0.75)); }
+          40% { transform: translateY(1.5px) scale(1.005); filter: drop-shadow(0 0 14px rgba(251, 191, 36, 0.4)); }
+          100% { transform: translateY(3px) scale(1.015); filter: drop-shadow(0 0 18px rgba(251, 191, 36, 0.55)); }
         }
         :global(.kenshi-wrap.anim-okori .sword) {
           animation: swordOkori 0.7s cubic-bezier(0.55, 0, 0.6, 0.7) forwards;

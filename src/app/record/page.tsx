@@ -122,6 +122,51 @@ export default function RecordPage() {
   }, [taskScores, techInputs]);
 
   // -----------------------------------------------------------------
+  // ★ 追加: 選択日（recordDate）に「自己評価済み」の課題マップを算出。
+  //         data.taskLogs（直近ログ）から、選択日と同日かつ自己評価
+  //         （evaluator_id が未設定）の課題を { task_id: score } で集める。
+  //         recordDate を変えると自動で再計算され、二重評価をUIでブロックする。
+  // -----------------------------------------------------------------
+  const evaluatedTaskScoreMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    const logs = data?.taskLogs ?? [];
+    for (const log of logs) {
+      // log.date は ISO 文字列（例: 2026-06-13T03:00:00.000Z）または
+      // YYYY-MM-DD のことがあるため、先頭10文字（YYYY-MM-DD）で日付比較する。
+      const logDay = (log.date ?? '').slice(0, 10);
+      // 自己評価のみを対象にする（先生評価 evaluator_id が入っている行は除外）。
+      const isSelf = !log.evaluator_id;
+      if (logDay === recordDate && isSelf) {
+        map[log.task_id] = log.score;
+      }
+    }
+    return map;
+  }, [data?.taskLogs, recordDate]);
+
+  // -----------------------------------------------------------------
+  // ★ 追加: 選択日（recordDate）に「記録済み」の技マップを算出。
+  //         data.techniqueLogs（直近ログ）から、選択日と同日の技を
+  //         { technique_id: { quantity, quality } } で集める。
+  //         技は自己記録のみのため evaluator_id の区別は不要。
+  //         recordDate を変えると自動で再計算され、二重記録をUIでブロックする。
+  // -----------------------------------------------------------------
+  const recordedTechMap = useMemo(() => {
+    const map: Record<string, { quantity: number; quality: number }> = {};
+    const logs = data?.techniqueLogs ?? [];
+    for (const log of logs) {
+      // log.date は ISO 文字列または YYYY-MM-DD のため先頭10文字で日付比較する。
+      const logDay = (log.date ?? '').slice(0, 10);
+      if (logDay === recordDate) {
+        map[log.technique_id] = {
+          quantity: log.quantity,
+          quality:  log.quality,
+        };
+      }
+    }
+    return map;
+  }, [data?.techniqueLogs, recordDate]);
+
+  // -----------------------------------------------------------------
   // ハンドラ
   // -----------------------------------------------------------------
   const handleTaskChange = (taskId: string, score: number) => {
@@ -158,15 +203,26 @@ export default function RecordPage() {
     try {
       const taskEvals = Object.entries(taskScores)
         .filter(([, s]) => s > 0)
+        // ★ 追加: 選択日にすでに自己評価済みの課題は送信対象から除外（二重防御）。
+        .filter(([task_id]) => !(task_id in evaluatedTaskScoreMap))
         .map(([task_id, score]) => ({ task_id, score }));
 
       const techniques = Object.entries(techInputs)
         .filter(([, t]) => t.quantity > 0 && t.quality > 0)
+        // ★ 追加: 選択日にすでに記録済みの技は送信対象から除外（二重防御）。
+        .filter(([technique_id]) => !(technique_id in recordedTechMap))
         .map(([technique_id, t]) => ({
           technique_id: technique_id as TechniqueId,
           quantity:     t.quantity as QuantityLevel,
           quality:      t.quality  as QualityLevel,
         }));
+
+      // ★ 追加: 重複除外の結果、記録対象が何も残らなければエラー表示して中断。
+      if (taskEvals.length === 0 && techniques.length === 0) {
+        setSubmitError('この日にきろくできる課題や技がありません');
+        setSubmitting(false);
+        return;
+      }
 
       const payload: SaveLogPayload = {
         action: 'saveLog',
@@ -292,20 +348,46 @@ export default function RecordPage() {
           </div>
 
           <div style={styles.cardList}>
-            {sortedTasks.map((task, i) => (
-              <TaskRater
-                key={task.id}
-                index={i}
-                taskId={task.id}
-                taskText={task.task_text}
-                score={taskScores[task.id] ?? 0}
-                onChange={(score) => handleTaskChange(task.id, score)}
-                criteriaExpanded={expandedTaskId === task.id}
-                onToggleCriteria={() =>
-                  setExpandedTaskId(prev => (prev === task.id ? null : task.id))
-                }
-              />
-            ))}
+            {sortedTasks.map((task, i) => {
+              // ★ 追加: 選択日にこの課題をすでに自己評価済みかを判定。
+              const evaluatedScore = evaluatedTaskScoreMap[task.id];
+              const isEvaluated = evaluatedScore !== undefined;
+
+              // 評価済みの課題は入力UIを出さず、「評価済」カードを表示してブロックする。
+              if (isEvaluated) {
+                return (
+                  <div key={task.id} style={styles.evaluatedCard}>
+                    <div style={styles.evaluatedBadge}>
+                      <span style={styles.evaluatedCheck}>✅</span>
+                      <span style={styles.evaluatedLabel}>評価済</span>
+                    </div>
+                    <div style={styles.evaluatedBody}>
+                      <span style={styles.evaluatedTaskText}>{task.task_text}</span>
+                      <span style={styles.evaluatedScore}>
+                        スコア: {'★'.repeat(evaluatedScore)}
+                        <span style={styles.evaluatedScoreNum}>（{evaluatedScore}）</span>
+                      </span>
+                    </div>
+                  </div>
+                );
+              }
+
+              // 未評価の課題はこれまで通り入力可能。
+              return (
+                <TaskRater
+                  key={task.id}
+                  index={i}
+                  taskId={task.id}
+                  taskText={task.task_text}
+                  score={taskScores[task.id] ?? 0}
+                  onChange={(score) => handleTaskChange(task.id, score)}
+                  criteriaExpanded={expandedTaskId === task.id}
+                  onToggleCriteria={() =>
+                    setExpandedTaskId(prev => (prev === task.id ? null : task.id))
+                  }
+                />
+              );
+            })}
           </div>
         </section>
 
@@ -321,6 +403,32 @@ export default function RecordPage() {
 
           <div style={styles.cardList}>
             {sortedTechs.map((tech) => {
+              // ★ 追加: 選択日にこの技をすでに記録済みかを判定。
+              const recordedTech = recordedTechMap[tech.id];
+              const isRecorded = recordedTech !== undefined;
+
+              // 記録済みの技は入力UIを出さず、「記録済」カードを表示してブロックする。
+              if (isRecorded) {
+                return (
+                  <div key={tech.id} style={styles.evaluatedCard}>
+                    <div style={styles.evaluatedBadge}>
+                      <span style={styles.evaluatedCheck}>✅</span>
+                      <span style={styles.evaluatedLabel}>記録済</span>
+                    </div>
+                    <div style={styles.evaluatedBody}>
+                      <span style={styles.evaluatedTaskText}>{tech.name}</span>
+                      <span style={styles.evaluatedScore}>
+                        量: {'●'.repeat(recordedTech.quantity)}
+                        <span style={styles.evaluatedScoreNum}>（{recordedTech.quantity}）</span>
+                        {'　'}質: {'★'.repeat(recordedTech.quality)}
+                        <span style={styles.evaluatedScoreNum}>（{recordedTech.quality}）</span>
+                      </span>
+                    </div>
+                  </div>
+                );
+              }
+
+              // 未記録の技はこれまで通り入力可能。
               const input = techInputs[tech.id] ?? { quantity: 0, quality: 0 };
               return (
                 <TechniqueRecorder
@@ -608,6 +716,64 @@ const styles: Record<string, React.CSSProperties> = {
     display:       'flex',
     flexDirection: 'column',
     gap:           '12px',
+  },
+
+  // === 評価済みカード（自己評価の二重防止表示） ===
+  evaluatedCard: {
+    display:         'flex',
+    alignItems:      'center',
+    gap:             '12px',
+    padding:         '12px 14px',
+    backgroundColor: 'rgba(30,124,58,0.16)',
+    border:          '2px dashed rgba(127,255,170,0.45)',
+    borderRadius:    '12px',
+    boxShadow:       'inset 0 0 16px rgba(30,124,58,0.18)',
+  },
+  evaluatedBadge: {
+    display:        'flex',
+    flexDirection:  'column',
+    alignItems:     'center',
+    justifyContent: 'center',
+    gap:            '2px',
+    flexShrink:     0,
+    minWidth:       '52px',
+  },
+  evaluatedCheck: {
+    fontSize: '24px',
+    filter:   'drop-shadow(0 0 6px rgba(127,255,170,0.6))',
+  },
+  evaluatedLabel: {
+    fontSize:      '10px',
+    fontWeight:    900,
+    color:         '#7FFFAA',
+    letterSpacing: '0.08em',
+    textShadow:    '0 0 4px rgba(127,255,170,0.5)',
+  },
+  evaluatedBody: {
+    display:       'flex',
+    flexDirection: 'column',
+    gap:           '4px',
+    flex:          1,
+    minWidth:      0,
+  },
+  evaluatedTaskText: {
+    fontSize:   '14px',
+    fontWeight: 900,
+    color:      'rgba(255,255,255,0.85)',
+    lineHeight: 1.4,
+  },
+  evaluatedScore: {
+    fontSize:   '14px',
+    fontWeight: 900,
+    color:      '#FFD700',
+    textShadow: '0 0 6px rgba(255,215,0,0.5)',
+    letterSpacing: '0.05em',
+  },
+  evaluatedScoreNum: {
+    fontSize:   '12px',
+    fontWeight: 700,
+    color:      'rgba(255,255,255,0.7)',
+    marginLeft: '2px',
   },
 
   // === 固定フッター ===

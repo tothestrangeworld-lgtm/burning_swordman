@@ -203,9 +203,57 @@ export async function saveLogApi(
   // 以降、DB へ渡す日付はすべて isoDate（時刻付き ISO）に統一する。
   const isoDate = resolveTimestamp(date);
 
-  // --- 課題（自己評価）行を生成 ---
+  // --- ★ 防波堤: 同じ日に「自己評価済み」の課題は二重記録させない ---
+  // 自己記録は evaluator_id IS NULL の行。先生評価（evaluator_id = teacherId）とは区別する。
+  // timestamptz 化に伴い、対象日の範囲検索（その日の0:00〜翌0:00・JST基準）で判定する。
+  // 既存と重複する task_id は安全にスキップし、未記録の課題だけを insert する。
+  let acceptedTaskEvals = taskEvals ?? [];
+  if (acceptedTaskEvals.length > 0) {
+    const { startIso, endIso } = resolveDayRange(date);
+    const { data: existingSelf, error: exErr } = await supabase
+      .from('task_logs')
+      .select('task_id')
+      .eq('user_id', user_id)
+      .is('evaluator_id', null)
+      .gte('date', startIso)
+      .lt('date', endIso);
+    throwIfError(exErr, 'saveLog:existing_self');
+
+    const alreadyTaskIds = new Set((existingSelf ?? []).map((e) => e.task_id));
+    // すでにその日に自己評価済みの課題は除外する。
+    acceptedTaskEvals = acceptedTaskEvals.filter(
+      (t) => !alreadyTaskIds.has(t.task_id),
+    );
+  }
+
+  // --- ★ 防波堤: 同じ日に「記録済み」の技は二重記録させない ---
+  // 技は自己記録のみ（evaluator_id を持たない）。対象日の範囲検索で判定する。
+  // 既存と重複する technique_id は安全にスキップし、未記録の技だけを insert する。
+  // ※ user_techniques の累計ポイント加算も、この acceptedTechniques を基準に行う
+  //   （重複スキップした技をポイント加算してしまうと二重加算になるため）。
+  let acceptedTechniques = techniques ?? [];
+  if (acceptedTechniques.length > 0) {
+    const { startIso, endIso } = resolveDayRange(date);
+    const { data: existingTech, error: exTechErr } = await supabase
+      .from('technique_logs')
+      .select('technique_id')
+      .eq('user_id', user_id)
+      .gte('date', startIso)
+      .lt('date', endIso);
+    throwIfError(exTechErr, 'saveLog:existing_technique');
+
+    const alreadyTechIds = new Set(
+      (existingTech ?? []).map((e) => e.technique_id),
+    );
+    // すでにその日に記録済みの技は除外する。
+    acceptedTechniques = acceptedTechniques.filter(
+      (t) => !alreadyTechIds.has(t.technique_id),
+    );
+  }
+
+  // --- 課題（自己評価）行を生成（重複除外後の acceptedTaskEvals を使う） ---
   let xpFromTasks = 0;
-  const taskRows = (taskEvals ?? []).map((t) => {
+  const taskRows = acceptedTaskEvals.map((t) => {
     const xp = calcSelfTaskXp(t.score);
     xpFromTasks += xp;
     return {
@@ -219,9 +267,9 @@ export async function saveLogApi(
     };
   });
 
-  // --- 技の記録行を生成 ---
+  // --- 技の記録行を生成（重複除外後の acceptedTechniques を使う） ---
   let xpFromTech = 0;
-  const techRows = (techniques ?? []).map((t) => {
+  const techRows = acceptedTechniques.map((t) => {
     const xp = calcTechniqueXp(t.quantity, t.quality);
     xpFromTech += xp;
     return {
@@ -244,8 +292,9 @@ export async function saveLogApi(
     throwIfError(error, 'saveLog:technique_logs');
   }
 
-  // --- user_techniques の累計ポイント更新（技ごと） ---
-  for (const t of techniques ?? []) {
+  // --- user_techniques の累計ポイント更新（重複除外後の acceptedTechniques のみ） ---
+  // ★ 重複スキップした技はここでも加算しない（二重加算防止）。
+  for (const t of acceptedTechniques) {
     const xp = calcTechniqueXp(t.quantity, t.quality);
     const { data: cur, error: selErr } = await supabase
       .from('user_techniques')
@@ -272,6 +321,25 @@ export async function saveLogApi(
   }
 
   const earned = xpFromTasks + xpFromTech;
+
+  // --- ★ 何も記録されなかった場合（全課題が重複スキップ＋技なし）は早期リターン ---
+  // user_status / xp_history を無駄に更新しないためのガード。
+  if (taskRows.length === 0 && techRows.length === 0) {
+    const { data: stNow } = await supabase
+      .from('user_status')
+      .select('total_xp, level')
+      .eq('user_id', user_id)
+      .maybeSingle();
+    const totalNow = stNow?.total_xp ?? 0;
+    return {
+      xp_earned:          0,
+      xp_from_tasks:      0,
+      xp_from_techniques: 0,
+      total_xp:           totalNow,
+      level:              stNow?.level ?? calcLevelFromXp(totalNow),
+      newAchievements:    [],
+    };
+  }
 
   // --- user_status の更新（合計XP・レベル・最終稽古日） ---
   // 初回記録などで user_status 行が未作成の場合があるため .maybeSingle() を使う。

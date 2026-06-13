@@ -267,7 +267,7 @@ const styles: Record<string, React.CSSProperties> = {
   xpLabel: {
     fontSize:      '12px',
     fontWeight:    700,
-    color:         THEME.textMuted,
+    color:         '#777777', // 白背景用に濃いグレーに変更,
     letterSpacing: '0.15em',
     marginBottom:  '4px',
   },
@@ -297,7 +297,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   xpBreakdown: {
     fontSize:  '11px',
-    color:     THEME.textMuted,
+    color:         '#777777', // 白背景用に濃いグレーに変更
     marginTop: '4px',
   },
 
@@ -325,13 +325,13 @@ const styles: Record<string, React.CSSProperties> = {
   levelLabel: {
     fontSize:      '9px',
     fontWeight:    900,
-    color:         THEME.textMuted,
+    color:         '#777777', // 白背景用に濃いグレーに変更,
     letterSpacing: '0.2em',
   },
   levelNum: {
     fontSize:   '24px',
     fontWeight: 900,
-    color:      THEME.text,
+    color:      '#777777',
   },
   arrow: {
     fontSize: '20px',
@@ -369,7 +369,7 @@ const styles: Record<string, React.CSSProperties> = {
   totalLabel: {
     fontSize:   '12px',
     fontWeight: 700,
-    color:      THEME.textMuted,
+    color:      '#777777', // 白背景用に濃いグレーに変更,
   },
   totalValue: {
     fontSize:   '16px',
