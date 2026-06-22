@@ -359,6 +359,7 @@ export default function StudentMiniGamePage() {
 
   const okoriStartRef    = useRef<number | null>(null);
   const timerRef         = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashTimerRef    = useRef<ReturnType<typeof setTimeout> | null>(null); // ★追加: フラッシュ消灯用タイマーを管理下に置く
   const roundIdxRef      = useRef(0);
   const matchCountRef    = useRef(0);
   const isInitializedRef = useRef(false);
@@ -368,7 +369,10 @@ export default function StudentMiniGamePage() {
   useEffect(() => { matchCountRef.current = matchCount; }, [matchCount]);
 
   useEffect(() => {
-    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current); // ★追加
+    };
   }, []);
 
   useEffect(() => {
@@ -412,6 +416,9 @@ export default function StudentMiniGamePage() {
   }, [loadRanking]);
 
   const finishRound = useCallback((result: RoundResult) => {
+    // ★この回の計測は確定したので起点をリセット（次ラウンドへ古い値を持ち越さない）
+    okoriStartRef.current = null;
+
     setLastResult(result);
     setResults(prev => [...prev, result]);
     setCutinText(result.cutinText);
@@ -460,6 +467,9 @@ export default function StudentMiniGamePage() {
     const waitMs = randomBetween(1000, 2000);
     if (timerRef.current) clearTimeout(timerRef.current);
 
+    // ★ラウンド開始時点で前回の計測起点を必ずクリアしておく
+    okoriStartRef.current = null;
+
     timerRef.current = setTimeout(() => {
       setPhase('pre_okori');
 
@@ -467,10 +477,16 @@ export default function StudentMiniGamePage() {
       timerRef.current = setTimeout(() => {
         const pattern = pickRandomPattern();
         setCurrentPattern(pattern);
+
+        // ★ 計測起点は「setPhase('okori') の直前」に確実に確定させる。
+        //   これにより okori 状態でタップされた時点では必ず起点が存在する。
         okoriStartRef.current = performance.now();
         setPhase('okori');
         setFlashType('okori');
-        setTimeout(() => setFlashType('none'), 120);
+
+        // ★ 野良 setTimeout を flashTimerRef で管理（リーク防止）
+        if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+        flashTimerRef.current = setTimeout(() => setFlashType('none'), 120);
 
         // ★ 子ども向け調整：okori継続（＝タップ猶予）を長めに確保
         //   子どもの選択反応＋位置決め（500〜700ms程度）でも
@@ -556,10 +572,13 @@ export default function StudentMiniGamePage() {
     }
 
     // ── 正しい部位タップ ──
-    // ★ 敵が動き始めた瞬間（okoriStartRef）からの純粋な経過時間をミリ秒で計測
-    const reactionMs = okoriStartRef.current !== null
-      ? performance.now() - okoriStartRef.current
-      : 0;
+    // ★ 敵が動き始めた瞬間（okoriStartRef）からの純粋な経過時間をミリ秒で計測。
+    //   起点が未確定（null）の場合は計測不能なので、0秒として記録せず処理を中断する。
+    //   ※ これが「記録が 0.000 秒になる」バグの直接原因だった。
+    if (okoriStartRef.current === null) {
+      return;
+    }
+    const reactionMs = performance.now() - okoriStartRef.current;
     const reactionMsRounded = Math.round(reactionMs);
 
     // ── strike フェーズ＝起こりを見切れず打突を許した → 被弾失敗（Fランク） ──
