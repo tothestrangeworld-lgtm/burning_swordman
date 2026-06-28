@@ -4,6 +4,7 @@
 // Phase 5: 全体評価（一括評価）API追加
 // Phase 6:   ミニゲーム『刹那ノ見切』API追加（1日5回・ランキング対応）
 // Phase 6.1: ランキングAPIを { top, history } 構造へ拡張（推移グラフ対応）
+// Phase 8:   「なかま」機能（門下生一覧＋応援システム）API追加
 // =====================================================================
 
 import useSWR, { SWRConfiguration, SWRResponse } from 'swr';
@@ -38,6 +39,9 @@ import type {
   AchievementMasterRow,
   NextLevelInfo,
   StudentSummary,
+//  NakamaEntry,
+//  NakamaListResponse,
+//  CheerResponse,
 } from '@/types';
 import {
   xpForLevel,
@@ -1489,6 +1493,8 @@ export const SWR_KEYS = {
     buildKey('getTeacherDashboard', { teacher_id: teacherId }),
   studentDetail: (teacherId: string, studentId: string) =>
     buildKey('getStudentDetail', { teacher_id: teacherId, student_id: studentId }),
+  // ★ Phase 8 追加: なかま一覧のキー（応援後のrevalidate用）
+  nakama:           (userId: string) => buildKey('getNakamaList', { user_id: userId }),
 } as const;
 
 // =====================================================================
@@ -2013,4 +2019,347 @@ export async function updateUserPasscode(
     user_id:      id,
     new_passcode: next,
   });
+}
+
+// =====================================================================
+// ★★★ Phase 8: 「なかま」機能（門下生一覧＋応援システム）API ★★★
+// =====================================================================
+
+/**
+ * なかま1人分のエントリ
+ * ★ プライバシー保護のため、公開するのは
+ *   名前 / 称号 / レベル / 合計XP / 最終稽古日 のみ。
+ *   自己評価・先生評価・コメント・弱点等は一切含めない。
+ */
+export interface NakamaEntry {
+  user_id:            string;
+  name:               string;
+  grade?:             string;
+  level:              number;
+  total_xp:           number;
+  title:              string;           // 称号（titleForLevel で導出）
+  last_practice_date: string | null;
+  /** 何日前に稽古したか（燃え盛り判定用・null は記録なし） */
+  daysSinceLastPractice: number | null;
+  /** 最終稽古日から3日以内なら true（燃えているアピール用） */
+  isBurning:          boolean;
+  /** 本日、自分がこのなかまを既に応援済みか（1日1回制限用） */
+  cheeredTodayByMe:   boolean;
+}
+
+/**
+ * なかま一覧レスポンス
+ */
+export interface NakamaListResponse {
+  /** 自分以外の門下生一覧（合計XP降順） */
+  nakama:      NakamaEntry[];
+  /** 自分が本日応援した人数（参考表示用） */
+  cheeredToday: number;
+}
+
+/**
+ * 応援アクションのレスポンス
+ */
+export interface CheerResponse {
+  /** 応援が成立したか */
+  cheered:        boolean;
+  /** 応援した相手のID */
+  to_user_id:     string;
+  /** 応援した相手の名前 */
+  to_user_name:   string;
+  /** 自分（応援した側）が得たXP */
+  my_xp_gained:   number;
+  /** 相手（応援された側）が得たXP */
+  their_xp_gained: number;
+  /** 1回の応援で付与されるXP（5固定） */
+  cheer_xp:       number;
+  /** メッセージ（成功・スキップ理由など） */
+  message:        string;
+}
+
+/** 応援1回で双方に付与されるXP */
+const CHEER_XP = 5;
+
+/**
+ * 内部API: なかま一覧を取得して組み立てる
+ * -------------------------------------------------------------------
+ * ・自分以外の生徒（role = 'student'）を取得
+ * ・user_status から レベル・合計XP・最終稽古日 を結合
+ * ・title_master から 称号 を導出
+ * ・本日自分が応援済みの相手（cheer_logs）を結合
+ * ★ プライベートな稽古内容（課題・技・評価・コメント）は一切取得しない。
+ */
+export async function fetchNakamaListApi(
+  myUserId: string,
+): Promise<NakamaListResponse> {
+  if (!myUserId) {
+    throw new Error('user_id が指定されていません');
+  }
+
+  // 本日（JST）の範囲を算出（応援の1日1回判定用）。
+  const { startIso, endIso } = resolveDayRange(undefined);
+
+  const [studentsRes, statusRes, titleRes, myCheersTodayRes] = await Promise.all([
+    // ★ 自分以外の門下生（公開情報のみ）
+    supabase
+      .from('users')
+      .select('id, name, grade')
+      .eq('role', 'student')
+      .neq('id', myUserId),
+    // ステータス（全生徒分・後でMap結合）
+    supabase
+      .from('user_status')
+      .select('user_id, total_xp, level, last_practice_date'),
+    // 称号マスター
+    supabase
+      .from('title_master')
+      .select('level, title')
+      .order('level', { ascending: true }),
+    // ★ 本日、自分が応援した相手（1日1回制限の判定用）
+    supabase
+      .from('cheer_logs')
+      .select('to_user_id')
+      .eq('from_user_id', myUserId)
+      .gte('cheered_at', startIso)
+      .lt('cheered_at', endIso),
+  ]);
+
+  throwIfError(studentsRes.error, 'fetchNakamaList:students');
+  throwIfError(statusRes.error, 'fetchNakamaList:user_status');
+  throwIfError(titleRes.error, 'fetchNakamaList:title_master');
+  throwIfError(myCheersTodayRes.error, 'fetchNakamaList:my_cheers_today');
+
+  const titleMaster: TitleMasterEntry[] = (titleRes.data ?? []).map((t) => ({
+    level: t.level,
+    title: t.title,
+  }));
+
+  const statusMap = new Map(
+    (statusRes.data ?? []).map((s) => [s.user_id, s]),
+  );
+
+  // 本日、自分が応援済みの相手IDセット
+  const cheeredSet = new Set(
+    (myCheersTodayRes.data ?? []).map((c) => c.to_user_id),
+  );
+
+  const now = Date.now();
+  const nakama: NakamaEntry[] = (studentsRes.data ?? []).map((u) => {
+    const st = statusMap.get(u.id);
+    const last = st?.last_practice_date ?? null;
+    const level = st?.level ?? 1;
+    const totalXp = st?.total_xp ?? 0;
+
+    // 最終稽古日からの経過日数（燃え盛り判定）。
+    const days =
+      last != null
+        ? Math.floor((now - new Date(last).getTime()) / (24 * 60 * 60 * 1000))
+        : null;
+    // 3日以内なら「燃えている」。
+    const isBurning = days != null && days <= 3;
+
+    return {
+      user_id:               u.id,
+      name:                  u.name,
+      grade:                 u.grade != null ? String(u.grade) : undefined,
+      level,
+      total_xp:              totalXp,
+      title:                 titleForLevel(level, titleMaster),
+      last_practice_date:    last,
+      daysSinceLastPractice: days,
+      isBurning,
+      cheeredTodayByMe:      cheeredSet.has(u.id),
+    };
+  });
+
+  // 合計XP降順で並べる（強い剣士が上位）。
+  nakama.sort((a, b) => b.total_xp - a.total_xp);
+
+  return {
+    nakama,
+    cheeredToday: cheeredSet.size,
+  };
+}
+
+/**
+ * 公開ラッパー: ログイン中の生徒IDを内部で付与してなかま一覧を取得
+ */
+export async function fetchNakamaList(): Promise<NakamaListResponse> {
+  const me = getAuthUser();
+  if (!me || me.role !== 'student') {
+    throw new Error('門下生としてログインしていません');
+  }
+  return fetchNakamaListApi(me.id);
+}
+
+/**
+ * 内部API: 応援を実行する
+ * -------------------------------------------------------------------
+ * ・1日1回制限: 同一相手への当日の応援が既にあればスキップ。
+ * ・cheer_logs に記録。
+ * ・応援した側（自分）と応援された側（相手）の両方に CHEER_XP を付与。
+ * ・xp_history に双方の履歴（type='cheer'）を残す。
+ */
+export async function cheerStudentApi(
+  payload: {
+    from_user_id: string;
+    to_user_id:   string;
+  },
+): Promise<CheerResponse> {
+  const { from_user_id, to_user_id } = payload;
+
+  // --- 自分自身への応援は禁止 ---
+  if (from_user_id === to_user_id) {
+    throw new Error('自分自身は応援できません');
+  }
+
+  // --- 相手の存在確認（名前取得も兼ねる） ---
+  const { data: toUser, error: toErr } = await supabase
+    .from('users')
+    .select('id, name, role')
+    .eq('id', to_user_id)
+    .single();
+  throwIfError(toErr, 'cheerStudent:to_user');
+  if (!toUser || toUser.role !== 'student') {
+    throw new Error('応援できる相手が見つかりません');
+  }
+
+  // --- ★ 1日1回制限: 本日（JST）すでに同じ相手を応援済みかチェック ---
+  const { startIso, endIso } = resolveDayRange(undefined);
+  const { data: existing, error: exErr } = await supabase
+    .from('cheer_logs')
+    .select('id')
+    .eq('from_user_id', from_user_id)
+    .eq('to_user_id', to_user_id)
+    .gte('cheered_at', startIso)
+    .lt('cheered_at', endIso)
+    .limit(1);
+  throwIfError(exErr, 'cheerStudent:existing');
+
+  if (existing && existing.length > 0) {
+    // すでに応援済み → XP付与せずスキップ。
+    return {
+      cheered:         false,
+      to_user_id,
+      to_user_name:    toUser.name,
+      my_xp_gained:    0,
+      their_xp_gained: 0,
+      cheer_xp:        CHEER_XP,
+      message:         `${toUser.name}は今日もう応援したよ！また明日応援しよう🔥`,
+    };
+  }
+
+  // --- 応援ログを記録 ---
+  const nowIso = new Date().toISOString();
+  const { error: insErr } = await supabase.from('cheer_logs').insert({
+    from_user_id,
+    to_user_id,
+    cheered_at: nowIso,
+  });
+  throwIfError(insErr, 'cheerStudent:insert');
+
+  // --- 双方のXPを加算するヘルパー（user_status の upsert ＋ xp_history 追記） ---
+  // 応援した側・された側で reason を変えて履歴に残す。
+  async function grantCheerXp(
+    userId: string,
+    reason: string,
+  ): Promise<void> {
+    const { data: st, error: stErr } = await supabase
+      .from('user_status')
+      .select('total_xp')
+      .eq('user_id', userId)
+      .maybeSingle();
+    throwIfError(stErr, 'cheerStudent:user_status.select');
+
+    const newTotal = (st?.total_xp ?? 0) + CHEER_XP;
+    const newLevel = calcLevelFromXp(newTotal);
+
+    const { error: updErr } = await supabase
+      .from('user_status')
+      .upsert(
+        {
+          user_id:  userId,
+          total_xp: newTotal,
+          level:    newLevel,
+        },
+        { onConflict: 'user_id' },
+      );
+    throwIfError(updErr, 'cheerStudent:user_status.upsert');
+
+    const { error: hisErr } = await supabase.from('xp_history').insert({
+      user_id:        userId,
+      date:           nowIso,
+      type:           'cheer',
+      amount:         CHEER_XP,
+      reason,
+      total_xp_after: newTotal,
+      level:          newLevel,
+    });
+    throwIfError(hisErr, 'cheerStudent:xp_history');
+  }
+
+  // --- 自分（応援した側）の名前を取得して履歴 reason に使う ---
+  const { data: fromUser } = await supabase
+    .from('users')
+    .select('name')
+    .eq('id', from_user_id)
+    .single();
+  const fromName = fromUser?.name ?? from_user_id;
+
+  // --- 双方にXP付与（応援した側 → された側 の順）---
+  await grantCheerXp(from_user_id, `${toUser.name}を応援した`);
+  await grantCheerXp(to_user_id, `${fromName}から応援された`);
+
+  return {
+    cheered:         true,
+    to_user_id,
+    to_user_name:    toUser.name,
+    my_xp_gained:    CHEER_XP,
+    their_xp_gained: CHEER_XP,
+    cheer_xp:        CHEER_XP,
+    message:         `${toUser.name}を応援した！おたがい ${CHEER_XP} XP ゲット🔥`,
+  };
+}
+
+/**
+ * 公開ラッパー: ログイン中の生徒IDを内部で付与して応援を実行する
+ *
+ * 例:
+ *   await cheerStudent('U002');
+ */
+export async function cheerStudent(
+  toUserId: string,
+): Promise<CheerResponse> {
+  const me = getAuthUser();
+  if (!me || me.role !== 'student') {
+    throw new Error('門下生としてログインしていません');
+  }
+  const target = (toUserId || '').trim();
+  if (!target) {
+    throw new Error('応援する相手が指定されていません');
+  }
+  return cheerStudentApi({
+    from_user_id: me.id,
+    to_user_id:   target,
+  });
+}
+
+// =====================================================================
+// SWRフック: なかま一覧（任意・10秒キャッシュ）
+// 応援後に mutate して即時反映する。
+// =====================================================================
+export function useNakamaListSWR(): SWRResponse<NakamaListResponse, Error> {
+  const me = typeof window !== 'undefined' ? getAuthUser() : null;
+  const key = me?.role === 'student'
+    ? buildKey('getNakamaList', { user_id: me.id })
+    : null;
+
+  return useSWR<NakamaListResponse, Error>(
+    key,
+    async () => fetchNakamaListApi(me!.id),
+    {
+      ...SWR_BASE_CONFIG,
+      dedupingInterval: SWR_DEDUP.TEACHER_LIST,
+    },
+  );
 }

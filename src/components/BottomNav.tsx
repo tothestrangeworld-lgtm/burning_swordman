@@ -5,6 +5,7 @@
 // ロール（生徒/先生）に応じて表示メニューを切替
 // Phase 6: 生徒メニューに「見切り」（ミニゲーム）を追加
 // Phase 7: 生徒・先生メニューに「設定」（あいことば変更）を追加
+// Phase 8: 生徒メニューに「なかま」（門下生一覧・応援）を追加
 // =====================================================================
 
 'use client';
@@ -76,6 +77,18 @@ function SwordsIcon({ size = 24, color, active }: IconProps) {
   );
 }
 
+// ★ Phase 8: 「なかま」用アイコン（燃える炎・応援エール）
+function FlameIcon({ size = 24, color, active }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke={color} strokeWidth={active ? 2.5 : 2}
+      strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 2c1 3 4 5 4 9a4 4 0 01-8 0c0-1 .3-2 1-3-.2 1.5.8 2.5 1.5 2.5.8 0 1.5-.7 1.5-1.7C12.5 6.5 11 4.5 12 2z" />
+      <path d="M8.5 13.5C7 15 6 16.8 6 18.5a6 6 0 0012 0c0-2-1-3.8-2.5-5.3.3 1.2-.5 2.3-1.5 2.6.5-1.5-.3-3.2-2-4.3.2 1.8-1 3-2 3.4-.5-.5-1-1-1.5-1.4z" />
+    </svg>
+  );
+}
+
 // ★ Phase 7: 設定「歯車」アイコン（あいことば変更画面用・自作SVG）
 function SettingsIcon({ size = 24, color, active }: IconProps) {
   return (
@@ -118,6 +131,7 @@ interface NavItem {
 const STUDENT_ITEMS: NavItem[] = [
   { key: 'home',     label: 'ホーム', href: '/',         icon: HomeIcon,     emoji: '🏠' },
   { key: 'record',   label: '記録',   href: '/record',   icon: RecordIcon,   emoji: '📝' },
+  { key: 'nakama',   label: 'なかま', href: '/nakama',   icon: FlameIcon,    emoji: '🔥' }, // ★ Phase 8 追加
   { key: 'minigame', label: '見切り', href: '/minigame', icon: SwordsIcon,   emoji: '⚔️' }, // ★ Phase 6 追加
   { key: 'settings', label: '設定',   href: '/settings', icon: SettingsIcon, emoji: '⚙️' }, // ★ Phase 7 追加
   { key: 'logout',   label: '退場',   action: 'logout',  icon: LogOutIcon,   emoji: '🚪' },
