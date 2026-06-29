@@ -94,11 +94,25 @@ function throwIfError(error: { message: string } | null, context: string): void 
 //   -9 時間の時差で前日へ巻き戻る事故を確実に防げるため。
 // =====================================================================
 function resolveTimestamp(date?: string): string {
-  // YYYY-MM-DD 形式（厳密一致）なら JST 正午を基準に ISO 化する。
+  // YYYY-MM-DD 形式（厳密一致）なら「指定日付 ＋ 実行時の現在時刻（JST）」で ISO 化する。
+  // ★ 固定正午をやめた理由:
+  //   同日に複数アクション（課題記録・先生評価など）があると 12:00 固定では
+  //   保存順（時系列）が消失し、推移グラフが「下がって見える」原因になっていた。
+  //   そこで「年月日 = 指定日 / 時分秒ミリ秒 = 実行時の現在時刻」を結合し、
+  //   同日内でも記録した順番が timestamptz に正しく刻まれるようにする。
   if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    return new Date(`${date}T12:00:00+09:00`).toISOString();
+    const now = new Date();
+    // 実行時の現在時刻を JST（+09:00）として時分秒ミリ秒を取り出す。
+    // getTimezoneOffset に依存せず、JST 固定オフセットで安定させる。
+    const jstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+    const hh = String(jstNow.getUTCHours()).padStart(2, '0');
+    const mm = String(jstNow.getUTCMinutes()).padStart(2, '0');
+    const ss = String(jstNow.getUTCSeconds()).padStart(2, '0');
+    const ms = String(jstNow.getUTCMilliseconds()).padStart(3, '0');
+    // 指定された年月日に、いま現在の時刻（JST）を結合して ISO 化する。
+    return new Date(`${date}T${hh}:${mm}:${ss}.${ms}+09:00`).toISOString();
   }
-  // 未指定・不正値は当日扱い（現在時刻）。
+  // 未指定・不正値は当日扱い（現在時刻そのまま）。
   return new Date().toISOString();
 }
 
