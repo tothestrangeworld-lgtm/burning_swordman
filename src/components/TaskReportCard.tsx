@@ -66,9 +66,12 @@ function daysSinceDate(dateStr: unknown): number {
   return Math.floor((todayUtc - evalUtc) / 86400000);
 }
 
-function teacherDisplayName(name: string | undefined | null): string {
+// 名前が取得できていない場合は、IDの一部を表示して先生を区別できるようにする
+function teacherDisplayName(name: string | undefined | null, fallbackId?: string): string {
   const trimmed = (name || '').trim();
-  if (!trimmed) return '先生';
+  if (!trimmed) {
+    return fallbackId ? `先生(ID:${String(fallbackId).slice(0, 4)})` : '先生';
+  }
   return trimmed.endsWith('先生') ? trimmed : `${trimmed}先生`;
 }
 
@@ -316,7 +319,7 @@ export default function TaskReportCard({
                             {formatEvalDate(comment.date)}
                           </span>
                           <span style={styles.commentTeacher}>
-                            {teacherDisplayName(comment.evaluator_name)}
+                            {teacherDisplayName(comment.evaluator_name, comment.evaluator_id)}
                           </span>
                           <span style={styles.commentScoreWrap}>
                             <span style={styles.commentScoreLabel}>評価</span>
