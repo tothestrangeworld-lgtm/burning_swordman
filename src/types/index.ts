@@ -291,11 +291,12 @@ export interface StudentDetailData {
   student:       User;
   status:        UserStatus;
   taskMaster:    TaskMasterEntry[];
-  titleMaster:           TitleMasterEntry[];   // ★追加
+  titleMaster:   TitleMasterEntry[];   // ★追加
   recentLogs:    TaskLogEntry[];      // 直近30日
   techniques:    Technique[];
   /** 先生が今日すでに評価した課題ID（連打防止） */
   todayEvaluatedTaskIds: string[];
+  teacherEvals?: TeacherEvaluationEntry[]; // ★追加
 }
 
 // =====================================================================
