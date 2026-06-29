@@ -718,13 +718,13 @@ const TEACHER_EVAL_MULTIPLIER_REF = 10;
  * ログイン中の先生IDを内部で自動付与する
  *
  * 例:
- *   await evaluateBulkStudents({
- *     student_ids: ['U001', 'U002'],
- *     evaluations: [
- *       { task_id: 'K001', score: 5 },
- *       { task_id: 'K002', score: 4, comment: 'よくがんばった' },
- *     ],
- *   });
+ * await evaluateBulkStudents({
+ * student_ids: ['U001', 'U002'],
+ * evaluations: [
+ * { task_id: 'K001', score: 5 },
+ * { task_id: 'K002', score: 4, comment: 'よくがんばった' },
+ * ],
+ * });
  */
 export async function evaluateBulkStudents(
   payload: BulkEvalPayload,
@@ -920,6 +920,19 @@ export async function fetchDashboard(userId: string): Promise<DashboardData> {
     title: t.title,
   }));
 
+  // --- 先生の名前を取得してマッピング（★追加） ---
+  const evalIdsSet = new Set<string>();
+  (taskLogsRes.data ?? []).forEach(l => {
+    if (l.evaluator_id && l.evaluator_id !== 'self') {
+      evalIdsSet.add(l.evaluator_id);
+    }
+  });
+  const evalIds = Array.from(evalIdsSet);
+  const { data: evalUsersRes } = evalIds.length > 0
+    ? await supabase.from('users').select('id, name').in('id', evalIds)
+    : { data: [] };
+  const evaluatorNameMap = new Map((evalUsersRes ?? []).map(u => [u.id, u.name]));
+
   // --- task_master を辞書化して task_logs に task_text を結合 ---
   const taskTextMap = new Map<string, string>(
     taskMaster.map((t) => [t.id, t.task_text]),
@@ -934,6 +947,7 @@ export async function fetchDashboard(userId: string): Promise<DashboardData> {
     score:        l.score,
     xp_earned:    l.xp_earned,
     evaluator_id: l.evaluator_id ?? undefined,
+    evaluator_name: l.evaluator_id && l.evaluator_id !== 'self' ? evaluatorNameMap.get(l.evaluator_id) : undefined,
     comment:      l.comment ?? undefined,
   }));
 
@@ -979,6 +993,7 @@ export async function fetchDashboard(userId: string): Promise<DashboardData> {
       score:        l.score,
       xp_earned:    l.xp_earned,
       evaluator_id: l.evaluator_id ?? '',
+      evaluator_name: l.evaluator_name, // ★追加（マッピングされた名前）
       comment:      l.comment,
     }));
 
@@ -1257,6 +1272,19 @@ export async function fetchStudentDetail(
     taskMaster.map((t) => [t.id, t.task_text]),
   );
 
+  // --- 先生の名前を取得してマッピング（★追加） ---
+  const evalIdsSet = new Set<string>();
+  (logsRes.data ?? []).forEach(l => {
+    if (l.evaluator_id && l.evaluator_id !== 'self') {
+      evalIdsSet.add(l.evaluator_id);
+    }
+  });
+  const evalIds = Array.from(evalIdsSet);
+  const { data: evalUsersRes } = evalIds.length > 0
+    ? await supabase.from('users').select('id, name').in('id', evalIds)
+    : { data: [] };
+  const evaluatorNameMap = new Map((evalUsersRes ?? []).map(u => [u.id, u.name]));
+
   const recentLogs: TaskLogEntry[] = (logsRes.data ?? []).map((l) => ({
     id:           l.id,
     user_id:      l.user_id,
@@ -1266,8 +1294,23 @@ export async function fetchStudentDetail(
     score:        l.score,
     xp_earned:    l.xp_earned,
     evaluator_id: l.evaluator_id ?? undefined,
+    evaluator_name: l.evaluator_id && l.evaluator_id !== 'self' ? evaluatorNameMap.get(l.evaluator_id) : undefined,
     comment:      l.comment ?? undefined,
   }));
+
+  // ★ 修正: teacherEvals をAPI側でしっかり構築し、戻り値に含める
+  const teacherEvals: TeacherEvaluationEntry[] = recentLogs
+    .filter((l) => l.evaluator_id && l.evaluator_id !== 'self')
+    .map((l) => ({
+      date:         l.date,
+      task_id:      l.task_id,
+      task_text:    l.task_text ?? '',
+      score:        l.score,
+      xp_earned:    l.xp_earned,
+      evaluator_id: l.evaluator_id ?? '',
+      evaluator_name: l.evaluator_name, // ★追加（マッピングされた名前）
+      comment:      l.comment,
+    }));
 
   const techMaster = (techMasterRes.data ?? []) as Array<{
     id: string;
@@ -1289,10 +1332,6 @@ export async function fetchStudentDetail(
   });
 
   // 当日すでに「この先生」が評価済みの課題ID（連打防止）
-  // ★ 修正: 評価は先生ごとに独立しているため、ログイン中の先生（teacherId）が
-  //         付けた評価だけを連打防止対象とする。
-  //         以前は evaluator_id !== 'self'（＝全先生の評価）で判定していたため、
-  //         他の先生が評価した課題まで「評価済み」と表示されてしまっていた。
   const todayEvaluatedTaskIds = recentLogs
     .filter((l) => l.date === today && l.evaluator_id === teacherId)
     .map((l) => l.task_id);
@@ -1326,6 +1365,7 @@ export async function fetchStudentDetail(
     recentLogs,
     techniques,
     todayEvaluatedTaskIds,
+    teacherEvals, // ★ 追加: これにより先生側の画面で teacherEvals が利用可能に
   };
 }
 
@@ -1459,9 +1499,6 @@ export function useStudentDetailSWR(
 
   return useSWR<StudentDetailData, Error>(
     key,
-    // ★ 修正: fetchStudentDetail が teacherId を必須引数に取るようになったため、
-    //         ログイン中の先生IDを第2引数として渡す。
-    //         key が null でない時点で teacherId / studentId は確定しているため非nullアサート可。
     async () => fetchStudentDetail(studentId!, teacherId!),
     {
       ...SWR_BASE_CONFIG,
@@ -1990,12 +2027,12 @@ export async function updateTasks(
 
 /**
  * 公開ラッパー: あいことばを変更する
- *   - 設定画面から呼びやすいシンプルな関数。
- *   - userId を明示的に渡す版（ログイン情報に依存しすぎない設計）。
- *   - 入力ガードを行ってから送信する。
+ * - 設定画面から呼びやすいシンプルな関数。
+ * - userId を明示的に渡す版（ログイン情報に依存しすぎない設計）。
+ * - 入力ガードを行ってから送信する。
  *
  * 例:
- *   await updateUserPasscode('U001', '5678');
+ * await updateUserPasscode('U001', '5678');
  */
 export async function updateUserPasscode(
   userId: string,
@@ -2028,8 +2065,8 @@ export async function updateUserPasscode(
 /**
  * なかま1人分のエントリ
  * ★ プライバシー保護のため、公開するのは
- *   名前 / 称号 / レベル / 合計XP / 最終稽古日 のみ。
- *   自己評価・先生評価・コメント・弱点等は一切含めない。
+ * 名前 / 称号 / レベル / 合計XP / 最終稽古日 のみ。
+ * 自己評価・先生評価・コメント・弱点等は一切含めない。
  */
 export interface NakamaEntry {
   user_id:            string;
@@ -2325,7 +2362,7 @@ export async function cheerStudentApi(
  * 公開ラッパー: ログイン中の生徒IDを内部で付与して応援を実行する
  *
  * 例:
- *   await cheerStudent('U002');
+ * await cheerStudent('U002');
  */
 export async function cheerStudent(
   toUserId: string,
