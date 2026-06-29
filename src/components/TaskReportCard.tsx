@@ -114,14 +114,16 @@ function aggregateByTask(
   });
 }
 
-function getLatestComment(
+// ★修正：最新1件だけでなく、直近のコメントを複数件取得する
+function getRecentComments(
   taskId: string,
   teacherEvals: TeacherEvaluationEntry[],
-): TeacherEvaluationEntry | null {
+  limit = 5
+): TeacherEvaluationEntry[] {
   const withComment = (teacherEvals ?? [])
     .filter(e => e.task_id === taskId && Boolean((e.comment || '').trim()))
-    .sort((a, b) => normalizeDateStr(b.date).localeCompare(normalizeDateStr(a.date)));
-  return withComment[0] ?? null;
+    .sort((a, b) => normalizeDateStr(b.date).localeCompare(normalizeDateStr(a.date))); // 降順（新しい順）
+  return withComment.slice(0, limit);
 }
 
 function getOverallBadge(avg: number): { label: string; color: string } {
@@ -179,11 +181,12 @@ export default function TaskReportCard({
     [taskMaster, taskLogs, windowDays],
   );
 
+  // ★修正：MapのValueを配列（直近コメントのリスト）に変更
   const commentMap = useMemo(() => {
-    const map = new Map<string, TeacherEvaluationEntry>();
+    const map = new Map<string, TeacherEvaluationEntry[]>();
     taskMaster.forEach(m => {
-      const latest = getLatestComment(m.id, teacherEvals);
-      if (latest) map.set(m.id, latest);
+      const recent = getRecentComments(m.id, teacherEvals);
+      if (recent.length > 0) map.set(m.id, recent);
     });
     return map;
   }, [taskMaster, teacherEvals]);
@@ -227,11 +230,12 @@ export default function TaskReportCard({
 
       <ul style={styles.list}>
         {aggregates.map((a) => {
-          const latestComment = commentMap.get(a.taskId) ?? null;
-          const hasComment    = Boolean(latestComment);
-          const isExpanded    = expandedTaskId === a.taskId;
-          const isNewComment  = hasComment && daysSinceDate(latestComment!.date) <= 3;
-          const canExpand     = hasComment;
+          const recentComments = commentMap.get(a.taskId) ?? [];
+          const hasComment     = recentComments.length > 0;
+          const isExpanded     = expandedTaskId === a.taskId;
+          // 最新のコメントが3日以内かチェックしてNEWバッジを出す
+          const isNewComment   = hasComment && daysSinceDate(recentComments[0].date) <= 3;
+          const canExpand      = hasComment;
 
           return (
             <li key={a.taskId} style={styles.rowWrap}>
@@ -296,28 +300,34 @@ export default function TaskReportCard({
                 <div
                   style={{
                     ...styles.commentPanel,
-                    maxHeight: isExpanded ? '220px' : '0',
+                    // 複数件表示されるよう高さを長めに確保（はみ出る場合は1000px等に調整）
+                    maxHeight: isExpanded ? '1000px' : '0',
                     opacity:   isExpanded ? 1 : 0,
                     marginTop: isExpanded ? '8px' : '0',
                     padding:   isExpanded ? '12px 14px' : '0 14px',
                   }}
                   aria-hidden={!isExpanded}
                 >
-                  <div style={styles.commentBubble}>
-                    <div style={styles.commentMeta}>
-                      <span style={styles.commentDate}>
-                        {formatEvalDate(latestComment!.date)}
-                      </span>
-                      <span style={styles.commentTeacher}>
-                        {teacherDisplayName(latestComment!.evaluator_name)}から
-                      </span>
-                      <span style={styles.commentScore}>
-                        ★{latestComment!.score}
-                      </span>
-                    </div>
-                    <p style={styles.commentBody}>
-                      {(latestComment!.comment || '').trim()}
-                    </p>
+                  <div style={styles.commentList}>
+                    {recentComments.map((comment, idx) => (
+                      <div key={idx} style={styles.commentBubble}>
+                        <div style={styles.commentMeta}>
+                          <span style={styles.commentDate}>
+                            {formatEvalDate(comment.date)}
+                          </span>
+                          <span style={styles.commentTeacher}>
+                            {teacherDisplayName(comment.evaluator_name)}
+                          </span>
+                          <span style={styles.commentScoreWrap}>
+                            <span style={styles.commentScoreLabel}>評価</span>
+                            {renderDiscreteStars(comment.score, 'teacher', 11)}
+                          </span>
+                        </div>
+                        <p style={styles.commentBody}>
+                          {(comment.comment || '').trim()}
+                        </p>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
@@ -527,20 +537,25 @@ const styles: Record<string, React.CSSProperties> = {
     paddingRight: '8px',
     paddingBottom: '10px',
   },
+  commentList: {
+    display:       'flex',
+    flexDirection: 'column',
+    gap:           '8px', // 複数コメント間の隙間
+  },
   commentBubble: {
     backgroundColor: THEME.bgBubble,
     border:          `1.5px solid ${THEME.borderSolid}`,
     borderRadius:    '12px',
-    padding:         '12px 14px',
+    padding:         '10px 12px',
     borderLeft:      `4px solid ${THEME.accent}`,
-    boxShadow:       '0 4px 16px rgba(0,0,0,0.35)',
+    boxShadow:       '0 2px 8px rgba(0,0,0,0.15)',
   },
   commentMeta: {
     display:    'flex',
-    alignItems: 'baseline',
+    alignItems: 'center',
     flexWrap:   'wrap',
-    gap:        '6px',
-    marginBottom: '8px',
+    gap:        '8px',
+    marginBottom: '6px',
   },
   commentDate: {
     fontSize:   '12px',
@@ -552,11 +567,15 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 800,
     color:      THEME.textMuted,
   },
-  commentScore: {
-    fontSize:   '12px',
-    fontWeight: 900,
-    color:      '#FFB400',
-    textShadow: '0 0 6px rgba(255,215,0,0.45)',
+  commentScoreWrap: {
+    display:    'flex',
+    alignItems: 'center',
+    gap:        '4px',
+  },
+  commentScoreLabel: {
+    fontSize:   '11px',
+    fontWeight: 800,
+    color:      THEME.textMuted,
   },
   commentBody: {
     margin:     0,
