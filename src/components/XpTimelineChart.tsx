@@ -200,9 +200,17 @@ export default function XpTimelineChart({
   // そこで date 文字列で明示的に昇順（古い→新しい）ソートする。
   // YYYY-MM-DD は辞書順＝時系列順なので localeCompare で正しく並ぶ。
   // 元配列は破壊しないようコピーしてからソートする。
-  const sortedHistory = [...xpHistory].sort((a, b) =>
-    String(a.date).slice(0, 10).localeCompare(String(b.date).slice(0, 10)),
-  );
+  const sortedHistory = [...xpHistory].sort((a, b) => {
+    // ★ プライマリ: 時刻まで含めた完全な昇順（古い→新しい）。
+    //   slice(0,10) の日付のみ比較をやめ、timestamptz の時刻情報を活かす。
+    const ta = new Date(a.date).getTime();
+    const tb = new Date(b.date).getTime();
+    if (ta !== tb) return ta - tb;
+    // ★ セカンダリ（フォールバック）: 時刻が完全に同じ場合は total_xp_after 昇順。
+    //   既存データ（12:00 固定で保存済み）が同刻で混在しても、
+    //   累計XPが小さい順に並ぶためグラフが下がって見える事故を防ぐ。
+    return a.total_xp_after - b.total_xp_after;
+  });
 
   const maxXP  = Math.max(...sortedHistory.map(e => e.total_xp_after));
   const height = embedded ? 170 : (compact ? 180 : 240);
