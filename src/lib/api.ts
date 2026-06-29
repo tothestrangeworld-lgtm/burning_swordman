@@ -1646,6 +1646,7 @@ export async function fetchMinigameStatusApi(
       .from('minigame_scores')
       .select('average_time')
       .eq('user_id', userId)
+      .gt('average_time', 0) // ★ 0.000秒バグ（不正データ）の除外
       .order('average_time', { ascending: true })
       .limit(1),
   ]);
@@ -1813,6 +1814,7 @@ export async function fetchMinigameRanking(): Promise<MinigameRankingResponse> {
     supabase
       .from('minigame_scores')
       .select('user_id, created_at, average_time')
+      .gt('average_time', 0) // ★ 0.000秒バグ（不正データ）の除外
       .order('created_at', { ascending: true }),
     supabase.from('users').select('id, name').eq('role', 'student'),
   ]);
