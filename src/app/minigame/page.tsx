@@ -12,8 +12,9 @@
  *
  * ★ lucide-react 不使用（自前インラインSVG）
  * ★ 1日5回プレイ制限
- * ★ 見切りランキング（TOP10 ＋ Recharts タイム推移グラフ）
+ * ★ 見切りランキング（平均タイム / 最速タイム タブ切替 ＋ Recharts タイム推移グラフ）
  * ★ Y軸反転（reversed）で「速い＝上」表示
+ * ★ Phase 6.2: ランキングを「平均タイム」「最速タイム」タブで切り替え（デフォルト＝平均）
  * =====================================================================
  */
 
@@ -75,6 +76,9 @@ type HitPart = 'men' | 'kote' | 'do';
 type PatternId = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H';
 
 type ViewState = 'menu' | 'playing' | 'records' | 'ranking';
+
+// ★ Phase 6.2: ランキングのタブ種別（平均 / 最速）
+type RankingTab = 'average' | 'best';
 
 type GamePhase =
   | 'loading'
@@ -352,10 +356,13 @@ export default function StudentMiniGamePage() {
   const [lastSaveResult, setLastSaveResult] = useState<MinigameSaveResult | null>(null);
   const [errorMessage, setErrorMessage]     = useState<string>('');
 
-  // ★ ランキング関連（top + history）
+  // ★ ランキング関連（topBest + topAverage + history）
   const [ranking, setRanking]               = useState<MinigameRankingResponse | null>(null);
   const [rankingLoading, setRankingLoading] = useState(false);
   const [rankingError, setRankingError]     = useState<string>('');
+
+  // ★ Phase 6.2: ランキングのタブ状態。デフォルトは「平均タイム」。
+  const [rankingTab, setRankingTab]         = useState<RankingTab>('average');
 
   const okoriStartRef    = useRef<number | null>(null);
   const timerRef         = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -412,6 +419,8 @@ export default function StudentMiniGamePage() {
 
   const openRanking = useCallback(() => {
     setViewState('ranking');
+    // ★ ランキングを開くたびにデフォルトの「平均タイム」へ戻す。
+    setRankingTab('average');
     loadRanking();
   }, [loadRanking]);
 
@@ -679,6 +688,19 @@ export default function StudentMiniGamePage() {
 
   const remainingQuota = Math.max(0, MAX_MATCHES_PER_DAY - matchCount);
 
+  // ★ Phase 6.2: 現在のタブに応じて表示するランキングリストを切り替える。
+  //   average → topAverage / best → topBest
+  const activeRankingList = useMemo(() => {
+    if (!ranking) return [];
+    return rankingTab === 'average' ? ranking.topAverage : ranking.topBest;
+  }, [ranking, rankingTab]);
+
+  // ★ 両タブともに記録が空かどうか（「まだ記録なし」表示の判定用）
+  const hasAnyRankingRecord =
+    !!ranking &&
+    ((ranking.topAverage && ranking.topAverage.length > 0) ||
+     (ranking.topBest && ranking.topBest.length > 0));
+
   return (
     <div className="mikiri-root" key={shakeKey} data-shake={shakeKey > 0 ? 'on' : 'off'}>
       <div className="mikiri-bg" aria-hidden="true">
@@ -866,7 +888,7 @@ export default function StudentMiniGamePage() {
           </div>
         )}
 
-        {/* ============ ★ ランキング画面（グラフ付き） ============ */}
+        {/* ============ ★ ランキング画面（タブ切替＋グラフ付き） ============ */}
         {viewState === 'ranking' && (
           <div className="overlay">
             <div className="console-box console-box--ranking">
@@ -892,41 +914,81 @@ export default function StudentMiniGamePage() {
                 <p className="summary-error">😣 とりこみ失敗: {rankingError}</p>
               )}
 
-              {!rankingLoading && !rankingError && ranking && ranking.top.length === 0 && (
+              {!rankingLoading && !rankingError && ranking && !hasAnyRankingRecord && (
                 <p className="console-msg" style={{ textAlign: 'center' }}>
                   📭 まだだれも記録してないよ！<br />🥇 いちばん乗りをめざせ！🔥
                 </p>
               )}
 
-              {!rankingLoading && !rankingError && ranking && ranking.top.length > 0 && (
+              {!rankingLoading && !rankingError && ranking && hasAnyRankingRecord && (
                 <>
-                  {/* ★ 推移グラフ */}
+                  {/* ★ 推移グラフ（最速タイム上位プレイヤー基準） */}
                   <RankingChart history={ranking.history} />
 
-                  {/* ★ TOP10リスト */}
-                  <p className="chart-caption" style={{ marginTop: 14 }}>🥇 ベストタイム TOP10</p>
-                  <div className="ranking-list">
-                    {ranking.top.map((entry, i) => {
-                      const rankNo = i + 1;
-                      const medal =
-                        rankNo === 1 ? '🥇'
-                        : rankNo === 2 ? '🥈'
-                        : rankNo === 3 ? '🥉'
-                        : '🔸';
-                      const medalClass =
-                        rankNo === 1 ? 'rank-gold'
-                        : rankNo === 2 ? 'rank-silver'
-                        : rankNo === 3 ? 'rank-bronze'
-                        : '';
-                      return (
-                        <div key={entry.userId} className={`ranking-row ${medalClass}`}>
-                          <span className="ranking-no">{medal}{pad2(rankNo)}</span>
-                          <span className="ranking-name">{entry.name}</span>
-                          <span className="ranking-time">💨 {formatTime(entry.bestTimeMs)}</span>
-                        </div>
-                      );
-                    })}
+                  {/* ★ Phase 6.2: 平均タイム / 最速タイム 切替タブ */}
+                  <div className="rank-tabs" role="tablist" aria-label="ランキングの種類">
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={rankingTab === 'average'}
+                      className={`rank-tab ${rankingTab === 'average' ? 'is-active' : ''}`}
+                      onClick={() => setRankingTab('average')}
+                    >
+                      📊 平均タイム
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={rankingTab === 'best'}
+                      className={`rank-tab ${rankingTab === 'best' ? 'is-active' : ''}`}
+                      onClick={() => setRankingTab('best')}
+                    >
+                      ⚡ 最速タイム
+                    </button>
                   </div>
+
+                  {/* ★ タブの説明（子ども向けに一言そえる） */}
+                  <p className="rank-tab-desc">
+                    {rankingTab === 'average'
+                      ? '🔥 ぜんぶの平均だから「ほんとうの実力」がわかる！'
+                      : '💨 いちばん速かった「会心の一撃」のタイム！'}
+                  </p>
+
+                  {/* ★ TOP10リスト（選択中タブに応じて切替） */}
+                  <p className="chart-caption" style={{ marginTop: 8 }}>
+                    {rankingTab === 'average' ? '🥇 平均タイム TOP10' : '🥇 ベストタイム TOP10'}
+                  </p>
+
+                  {activeRankingList.length === 0 ? (
+                    <p className="console-msg" style={{ textAlign: 'center' }}>
+                      📭 このランキングはまだ記録がないよ！🔥
+                    </p>
+                  ) : (
+                    <div className="ranking-list">
+                      {activeRankingList.map((entry, i) => {
+                        const rankNo = i + 1;
+                        const medal =
+                          rankNo === 1 ? '🥇'
+                          : rankNo === 2 ? '🥈'
+                          : rankNo === 3 ? '🥉'
+                          : '🔸';
+                        const medalClass =
+                          rankNo === 1 ? 'rank-gold'
+                          : rankNo === 2 ? 'rank-silver'
+                          : rankNo === 3 ? 'rank-bronze'
+                          : '';
+                        // ★ タブによって絵文字を変えて「平均/最速」を直感的に区別
+                        const timeIcon = rankingTab === 'average' ? '📊' : '💨';
+                        return (
+                          <div key={entry.userId} className={`ranking-row ${medalClass}`}>
+                            <span className="ranking-no">{medal}{pad2(rankNo)}</span>
+                            <span className="ranking-name">{entry.name}</span>
+                            <span className="ranking-time">{timeIcon} {formatTime(entry.bestTimeMs)}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </>
               )}
 
@@ -1456,6 +1518,51 @@ export default function StudentMiniGamePage() {
           text-align: center; color: #ffd97a;
           font-size: 13px; font-weight: 700; line-height: 1.8;
           padding: 16px;
+        }
+
+        /* ===== ★ Phase 6.2: ランキング切替タブ ===== */
+        .rank-tabs {
+          display: flex;
+          gap: 8px;
+          margin: 12px 0 4px;
+          padding: 5px;
+          background: rgba(20, 10, 10, 0.45);
+          border: 2px solid rgba(255, 215, 0, 0.25);
+          border-radius: 16px;
+          position: relative; z-index: 1;
+        }
+        .rank-tab {
+          flex: 1;
+          padding: 11px 8px;
+          font-family: inherit;
+          font-size: 14px;
+          font-weight: 900;
+          letter-spacing: 0.02em;
+          color: #ffd97a;
+          background: transparent;
+          border: 2px solid transparent;
+          border-radius: 12px;
+          cursor: pointer;
+          transition: all 0.18s ease;
+        }
+        .rank-tab:hover {
+          color: #fff;
+          background: rgba(178, 34, 34, 0.35);
+        }
+        .rank-tab.is-active {
+          color: #1a0606;
+          background: linear-gradient(135deg, #FFD700, #ffb347);
+          border-color: #fff3c4;
+          box-shadow: 0 4px 14px rgba(255, 200, 60, 0.45);
+          transform: translateY(-1px);
+        }
+        .rank-tab-desc {
+          margin: 0 0 4px;
+          text-align: center;
+          font-size: 12px;
+          font-weight: 700;
+          color: #ffd97a;
+          line-height: 1.6;
         }
 
         /* ===== ★ ランキングリスト ===== */

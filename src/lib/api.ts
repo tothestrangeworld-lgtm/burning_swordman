@@ -4,6 +4,8 @@
 // Phase 5: 全体評価（一括評価）API追加
 // Phase 6:   ミニゲーム『刹那ノ見切』API追加（1日5回・ランキング対応）
 // Phase 6.1: ランキングAPIを { top, history } 構造へ拡張（推移グラフ対応）
+// Phase 6.2: ランキングを { topBest, topAverage, history } 構造へ拡張
+//            （平均タイム/最速タイムのタブ切替対応・0以下のバグデータは完全除外）
 // Phase 8:   「なかま」機能（門下生一覧＋応援システム）API追加
 // =====================================================================
 
@@ -94,11 +96,25 @@ function throwIfError(error: { message: string } | null, context: string): void 
 //   -9 時間の時差で前日へ巻き戻る事故を確実に防げるため。
 // =====================================================================
 function resolveTimestamp(date?: string): string {
-  // YYYY-MM-DD 形式（厳密一致）なら JST 正午を基準に ISO 化する。
+  // YYYY-MM-DD 形式（厳密一致）なら「指定日付 ＋ 実行時の現在時刻（JST）」で ISO 化する。
+  // ★ 固定正午をやめた理由:
+  //   同日に複数アクション（課題記録・先生評価など）があると 12:00 固定では
+  //   保存順（時系列）が消失し、推移グラフが「下がって見える」原因になっていた。
+  //   そこで「年月日 = 指定日 / 時分秒ミリ秒 = 実行時の現在時刻」を結合し、
+  //   同日内でも記録した順番が timestamptz に正しく刻まれるようにする。
   if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    return new Date(`${date}T12:00:00+09:00`).toISOString();
+    const now = new Date();
+    // 実行時の現在時刻を JST（+09:00）として時分秒ミリ秒を取り出す。
+    // getTimezoneOffset に依存せず、JST 固定オフセットで安定させる。
+    const jstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+    const hh = String(jstNow.getUTCHours()).padStart(2, '0');
+    const mm = String(jstNow.getUTCMinutes()).padStart(2, '0');
+    const ss = String(jstNow.getUTCSeconds()).padStart(2, '0');
+    const ms = String(jstNow.getUTCMilliseconds()).padStart(3, '0');
+    // 指定された年月日に、いま現在の時刻（JST）を結合して ISO 化する。
+    return new Date(`${date}T${hh}:${mm}:${ss}.${ms}+09:00`).toISOString();
   }
-  // 未指定・不正値は当日扱い（現在時刻）。
+  // 未指定・不正値は当日扱い（現在時刻そのまま）。
   return new Date().toISOString();
 }
 
@@ -718,13 +734,13 @@ const TEACHER_EVAL_MULTIPLIER_REF = 10;
  * ログイン中の先生IDを内部で自動付与する
  *
  * 例:
- *   await evaluateBulkStudents({
- *     student_ids: ['U001', 'U002'],
- *     evaluations: [
- *       { task_id: 'K001', score: 5 },
- *       { task_id: 'K002', score: 4, comment: 'よくがんばった' },
- *     ],
- *   });
+ * await evaluateBulkStudents({
+ * student_ids: ['U001', 'U002'],
+ * evaluations: [
+ * { task_id: 'K001', score: 5 },
+ * { task_id: 'K002', score: 4, comment: 'よくがんばった' },
+ * ],
+ * });
  */
 export async function evaluateBulkStudents(
   payload: BulkEvalPayload,
@@ -920,6 +936,19 @@ export async function fetchDashboard(userId: string): Promise<DashboardData> {
     title: t.title,
   }));
 
+  // --- 先生の名前を取得してマッピング（★追加） ---
+  const evalIdsSet = new Set<string>();
+  (taskLogsRes.data ?? []).forEach(l => {
+    if (l.evaluator_id && l.evaluator_id !== 'self') {
+      evalIdsSet.add(l.evaluator_id);
+    }
+  });
+  const evalIds = Array.from(evalIdsSet);
+  const { data: evalUsersRes } = evalIds.length > 0
+    ? await supabase.from('users').select('id, name').in('id', evalIds)
+    : { data: [] };
+  const evaluatorNameMap = new Map((evalUsersRes ?? []).map(u => [u.id, u.name]));
+
   // --- task_master を辞書化して task_logs に task_text を結合 ---
   const taskTextMap = new Map<string, string>(
     taskMaster.map((t) => [t.id, t.task_text]),
@@ -934,6 +963,7 @@ export async function fetchDashboard(userId: string): Promise<DashboardData> {
     score:        l.score,
     xp_earned:    l.xp_earned,
     evaluator_id: l.evaluator_id ?? undefined,
+    evaluator_name: l.evaluator_id && l.evaluator_id !== 'self' ? evaluatorNameMap.get(l.evaluator_id) : undefined,
     comment:      l.comment ?? undefined,
   }));
 
@@ -979,6 +1009,7 @@ export async function fetchDashboard(userId: string): Promise<DashboardData> {
       score:        l.score,
       xp_earned:    l.xp_earned,
       evaluator_id: l.evaluator_id ?? '',
+      evaluator_name: l.evaluator_name, // ★追加（マッピングされた名前）
       comment:      l.comment,
     }));
 
@@ -1257,6 +1288,19 @@ export async function fetchStudentDetail(
     taskMaster.map((t) => [t.id, t.task_text]),
   );
 
+  // --- 先生の名前を取得してマッピング（★追加） ---
+  const evalIdsSet = new Set<string>();
+  (logsRes.data ?? []).forEach(l => {
+    if (l.evaluator_id && l.evaluator_id !== 'self') {
+      evalIdsSet.add(l.evaluator_id);
+    }
+  });
+  const evalIds = Array.from(evalIdsSet);
+  const { data: evalUsersRes } = evalIds.length > 0
+    ? await supabase.from('users').select('id, name').in('id', evalIds)
+    : { data: [] };
+  const evaluatorNameMap = new Map((evalUsersRes ?? []).map(u => [u.id, u.name]));
+
   const recentLogs: TaskLogEntry[] = (logsRes.data ?? []).map((l) => ({
     id:           l.id,
     user_id:      l.user_id,
@@ -1266,8 +1310,23 @@ export async function fetchStudentDetail(
     score:        l.score,
     xp_earned:    l.xp_earned,
     evaluator_id: l.evaluator_id ?? undefined,
+    evaluator_name: l.evaluator_id && l.evaluator_id !== 'self' ? evaluatorNameMap.get(l.evaluator_id) : undefined,
     comment:      l.comment ?? undefined,
   }));
+
+  // ★ 修正: teacherEvals をAPI側でしっかり構築し、戻り値に含める
+  const teacherEvals: TeacherEvaluationEntry[] = recentLogs
+    .filter((l) => l.evaluator_id && l.evaluator_id !== 'self')
+    .map((l) => ({
+      date:         l.date,
+      task_id:      l.task_id,
+      task_text:    l.task_text ?? '',
+      score:        l.score,
+      xp_earned:    l.xp_earned,
+      evaluator_id: l.evaluator_id ?? '',
+      evaluator_name: l.evaluator_name, // ★追加（マッピングされた名前）
+      comment:      l.comment,
+    }));
 
   const techMaster = (techMasterRes.data ?? []) as Array<{
     id: string;
@@ -1289,10 +1348,6 @@ export async function fetchStudentDetail(
   });
 
   // 当日すでに「この先生」が評価済みの課題ID（連打防止）
-  // ★ 修正: 評価は先生ごとに独立しているため、ログイン中の先生（teacherId）が
-  //         付けた評価だけを連打防止対象とする。
-  //         以前は evaluator_id !== 'self'（＝全先生の評価）で判定していたため、
-  //         他の先生が評価した課題まで「評価済み」と表示されてしまっていた。
   const todayEvaluatedTaskIds = recentLogs
     .filter((l) => l.date === today && l.evaluator_id === teacherId)
     .map((l) => l.task_id);
@@ -1326,6 +1381,7 @@ export async function fetchStudentDetail(
     recentLogs,
     techniques,
     todayEvaluatedTaskIds,
+    teacherEvals, // ★ 追加: これにより先生側の画面で teacherEvals が利用可能に
   };
 }
 
@@ -1459,9 +1515,6 @@ export function useStudentDetailSWR(
 
   return useSWR<StudentDetailData, Error>(
     key,
-    // ★ 修正: fetchStudentDetail が teacherId を必須引数に取るようになったため、
-    //         ログイン中の先生IDを第2引数として渡す。
-    //         key が null でない時点で teacherId / studentId は確定しているため非nullアサート可。
     async () => fetchStudentDetail(studentId!, teacherId!),
     {
       ...SWR_BASE_CONFIG,
@@ -1500,6 +1553,7 @@ export const SWR_KEYS = {
 // =====================================================================
 // ★★★ Phase 6: ミニゲーム『刹那ノ見切』API（重複排除・統合版） ★★★
 // ★★★ Phase 6.1: ランキングを { top, history } 構造へ拡張       ★★★
+// ★★★ Phase 6.2: ランキングを { topBest, topAverage, history } へ拡張 ★★★
 // =====================================================================
 
 /**
@@ -1549,15 +1603,21 @@ export interface MinigameSaveResult {
 }
 
 /**
- * ランキング1件分（top 用）
+ * ランキング1件分（topBest / topAverage 共通）
+ * ★ Phase 6.2: bestTimeMs は「その指標での代表タイム(ms)」を表す。
+ *   - topBest   … そのユーザーの全プレイ中の最速タイム（最小値）
+ *   - topAverage … そのユーザーの全プレイの平均タイム（合計÷回数）
+ *   既存フロント（formatTime 等）との互換のためフィールド名は bestTimeMs を維持する。
  */
 export interface MinigameRankingEntry {
   /** 生徒ID */
   userId:     string;
   /** 生徒名 */
   name:       string;
-  /** その生徒のベストタイム（ms・小さいほど速い） */
+  /** 代表タイム（ms・小さいほど速い） */
   bestTimeMs: number;
+  /** ★ Phase 6.2: このユーザーの有効プレイ回数（0以下を除外した件数・参考表示用） */
+  playCount:  number;
 }
 
 /**
@@ -1573,12 +1633,16 @@ export interface MinigameRankingSeries {
 }
 
 /**
- * ★ Phase 6.1: ランキングAPIのレスポンス全体
+ * ★ Phase 6.2: ランキングAPIのレスポンス全体
+ *   平均タイム/最速タイムのタブ切替に対応するため、
+ *   従来の単一 top を topBest / topAverage の2系列へ拡張した。
  */
 export interface MinigameRankingResponse {
-  /** 全期間ベスト上位（最大10名・昇順） */
-  top: MinigameRankingEntry[];
-  /** 推移グラフ用データ */
+  /** ★ 最速タイム上位（average_time の最小値・昇順／最大10名） */
+  topBest: MinigameRankingEntry[];
+  /** ★ 平均タイム上位（average_time の平均値・昇順／最大10名） */
+  topAverage: MinigameRankingEntry[];
+  /** 推移グラフ用データ（最速タイム上位プレイヤー基準） */
   history: {
     /** 日付ラベル（"MM-dd"・古い→新しい） */
     dates: string[];
@@ -1609,6 +1673,7 @@ export async function fetchMinigameStatusApi(
       .from('minigame_scores')
       .select('average_time')
       .eq('user_id', userId)
+      .gt('average_time', 0) // ★ 0.000秒バグ（不正データ）の除外
       .order('average_time', { ascending: true })
       .limit(1),
   ]);
@@ -1762,12 +1827,19 @@ export async function saveMinigameResult(
 }
 
 /**
- * 公開API: 道場内ランキング（TOP10＋推移グラフ用データ）を取得
- * minigame_scores 全件から、ユーザーごとのベストタイムTOP10と
- * 直近7日間のタイム推移を組み立てる。誰でも閲覧可能。
+ * 公開API: 道場内ランキング（最速TOP10＋平均TOP10＋推移グラフ用データ）を取得
+ * -------------------------------------------------------------------
+ * minigame_scores 全件から、ユーザーごとに以下を集計する。
+ *   1. 最速タイム (topBest)    … average_time の最小値（昇順TOP10）
+ *   2. 平均タイム (topAverage) … average_time の平均値（合計÷回数・昇順TOP10）
+ * ★【重要】いずれの集計でも average_time <= 0 のバグデータは完全に除外する。
+ *   除外は SQL 側（.gt('average_time', 0)）に加え、
+ *   集計ループ内でも二重に防御する（保険）。
+ * 推移グラフ（history.series）は「最速タイム上位プレイヤー」を基準に組み立てる。
+ * 誰でも閲覧可能。
  */
 export async function fetchMinigameRanking(): Promise<MinigameRankingResponse> {
-  // 直近7日分のスコア（推移グラフ用）+ 全期間ベスト（TOP用）
+  // 直近7日分のスコア（推移グラフ用）+ 全期間ベスト/平均（TOP用）
   const since7 = new Date(Date.now() - 6 * 24 * 60 * 60 * 1000)
     .toISOString()
     .slice(0, 10);
@@ -1776,6 +1848,7 @@ export async function fetchMinigameRanking(): Promise<MinigameRankingResponse> {
     supabase
       .from('minigame_scores')
       .select('user_id, created_at, average_time')
+      .gt('average_time', 0) // ★ 0.000秒バグ（不正データ）の除外（SQL側の第一防御）
       .order('created_at', { ascending: true }),
     supabase.from('users').select('id, name').eq('role', 'student'),
   ]);
@@ -1787,20 +1860,53 @@ export async function fetchMinigameRanking(): Promise<MinigameRankingResponse> {
     (usersRes.data ?? []).map((u) => [u.id, u.name]),
   );
 
-  // --- 全期間ベスト（昇順TOP10） ---
-  const bestByUser = new Map<string, number>();
+  // --- ユーザーごとに「最速(最小値)」「合計」「有効件数」を同時集計 ---
+  // ★ average_time <= 0 のバグデータはここでも明示的にスキップする（二重防御）。
+  const bestByUser = new Map<string, number>();      // 最速タイム（最小値）
+  const sumByUser  = new Map<string, number>();      // 合計タイム（平均算出用）
+  const countByUser = new Map<string, number>();     // 有効プレイ回数
+
   for (const s of scoresRes.data ?? []) {
-    const cur = bestByUser.get(s.user_id);
-    if (cur == null || s.average_time < cur) {
-      bestByUser.set(s.user_id, s.average_time);
+    const t = s.average_time;
+    // ★ 0以下のバグデータは集計に含めない（最速・平均ともに除外）。
+    if (t == null || t <= 0) continue;
+
+    // 最速（最小値）
+    const curBest = bestByUser.get(s.user_id);
+    if (curBest == null || t < curBest) {
+      bestByUser.set(s.user_id, t);
     }
+    // 合計・件数（平均算出用）
+    sumByUser.set(s.user_id, (sumByUser.get(s.user_id) ?? 0) + t);
+    countByUser.set(s.user_id, (countByUser.get(s.user_id) ?? 0) + 1);
   }
-  const top: MinigameRankingEntry[] = Array.from(bestByUser.entries())
+
+  // --- 最速タイム ランキング（topBest・昇順TOP10） ---
+  const topBest: MinigameRankingEntry[] = Array.from(bestByUser.entries())
     .map(([userId, bestTimeMs]) => ({
       userId,
       name:       nameMap.get(userId) ?? userId,
       bestTimeMs,
+      playCount:  countByUser.get(userId) ?? 0,
     }))
+    .sort((a, b) => a.bestTimeMs - b.bestTimeMs)
+    .slice(0, 10);
+
+  // --- 平均タイム ランキング（topAverage・昇順TOP10） ---
+  // ★ 平均 = 合計 ÷ 有効プレイ回数（0以下は既に除外済み）。
+  //   四捨五入して ms 単位の整数にそろえ、formatTime と整合させる。
+  const topAverage: MinigameRankingEntry[] = Array.from(countByUser.entries())
+    .filter(([, count]) => count > 0) // 有効プレイが1回以上ある人のみ
+    .map(([userId, count]) => {
+      const sum = sumByUser.get(userId) ?? 0;
+      const avg = Math.round(sum / count);
+      return {
+        userId,
+        name:       nameMap.get(userId) ?? userId,
+        bestTimeMs: avg, // ★ ここには「平均タイム」を格納（フィールド名は互換維持）
+        playCount:  count,
+      };
+    })
     .sort((a, b) => a.bestTimeMs - b.bestTimeMs)
     .slice(0, 10);
 
@@ -1811,11 +1917,13 @@ export async function fetchMinigameRanking(): Promise<MinigameRankingResponse> {
     dates.push(`${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
   }
 
-  // --- TOP10ユーザーの日別ベスト推移 ---
-  const series: MinigameRankingSeries[] = top.map((entry) => {
+  // --- 推移グラフ: 最速タイム上位（topBest）プレイヤーの日別ベスト推移 ---
+  const series: MinigameRankingSeries[] = topBest.map((entry) => {
     const byDate = new Map<string, number>();
     for (const s of scoresRes.data ?? []) {
       if (s.user_id !== entry.userId) continue;
+      // ★ グラフでも 0以下のバグデータは除外する。
+      if (s.average_time == null || s.average_time <= 0) continue;
       const day = String(s.created_at).slice(0, 10);
       if (day < since7) continue;
       const label = `${day.slice(5, 7)}-${day.slice(8, 10)}`;
@@ -1832,7 +1940,8 @@ export async function fetchMinigameRanking(): Promise<MinigameRankingResponse> {
   });
 
   return {
-    top,
+    topBest,
+    topAverage,
     history: { dates, series },
   };
 }
@@ -1859,7 +1968,7 @@ export function useMinigameStatusSWR() {
 
 // =====================================================================
 // SWRフック: ミニゲームランキング（任意・10秒キャッシュ）
-// ★ Phase 6.1: 戻り値型を MinigameRankingResponse に変更
+// ★ Phase 6.2: 戻り値型を MinigameRankingResponse（topBest/topAverage）に拡張
 // =====================================================================
 export function useMinigameRankingSWR() {
   return useSWR<MinigameRankingResponse, Error>(
@@ -1990,12 +2099,12 @@ export async function updateTasks(
 
 /**
  * 公開ラッパー: あいことばを変更する
- *   - 設定画面から呼びやすいシンプルな関数。
- *   - userId を明示的に渡す版（ログイン情報に依存しすぎない設計）。
- *   - 入力ガードを行ってから送信する。
+ * - 設定画面から呼びやすいシンプルな関数。
+ * - userId を明示的に渡す版（ログイン情報に依存しすぎない設計）。
+ * - 入力ガードを行ってから送信する。
  *
  * 例:
- *   await updateUserPasscode('U001', '5678');
+ * await updateUserPasscode('U001', '5678');
  */
 export async function updateUserPasscode(
   userId: string,
@@ -2028,8 +2137,8 @@ export async function updateUserPasscode(
 /**
  * なかま1人分のエントリ
  * ★ プライバシー保護のため、公開するのは
- *   名前 / 称号 / レベル / 合計XP / 最終稽古日 のみ。
- *   自己評価・先生評価・コメント・弱点等は一切含めない。
+ * 名前 / 称号 / レベル / 合計XP / 最終稽古日 のみ。
+ * 自己評価・先生評価・コメント・弱点等は一切含めない。
  */
 export interface NakamaEntry {
   user_id:            string;
@@ -2325,7 +2434,7 @@ export async function cheerStudentApi(
  * 公開ラッパー: ログイン中の生徒IDを内部で付与して応援を実行する
  *
  * 例:
- *   await cheerStudent('U002');
+ * await cheerStudent('U002');
  */
 export async function cheerStudent(
   toUserId: string,
