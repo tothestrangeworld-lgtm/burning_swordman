@@ -24,6 +24,7 @@ import {
   levelColor,
   calcTeacherTaskXp,
   TeacherEvalPayload,
+  TeacherEvaluationEntry, // ★追加: 先生の評価型をインポート
 } from '@/types';
 
 import TeacherTaskRater from '@/components/TeacherTaskRater';
@@ -72,8 +73,6 @@ function formatShortDate(rawDate: string): string {
 
 // =====================================================================
 // 本日の日付（YYYY-MM-DD）をローカルタイム基準で取得するヘルパー
-// new Date().toISOString() は UTC 基準のため、JST 深夜帯に前日へズレる。
-// ローカルの年月日から直接組み立てることで日付ズレを防ぐ。
 // =====================================================================
 function getTodayLocal(): string {
   const d  = new Date();
@@ -81,6 +80,13 @@ function getTodayLocal(): string {
   const m  = String(d.getMonth() + 1).padStart(2, '0');
   const dd = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${dd}`;
+}
+
+// 先生の名前表示ヘルパー
+function teacherDisplayName(name: string | undefined | null): string {
+  const trimmed = (name || '').trim();
+  if (!trimmed) return '先生';
+  return trimmed.endsWith('先生') ? trimmed : `${trimmed}先生`;
 }
 
 export default function TeacherEvalPage() {
@@ -117,7 +123,6 @@ export default function TeacherEvalPage() {
   // -----------------------------------------------------------------
   const [taskScores, setTaskScores]     = useState<TaskScoreMap>({});
   const [taskComments, setTaskComments] = useState<TaskCommentMap>({});
-  // ★ 追加: 評価対象日（初期値は本日・ローカル基準）。カレンダーで過去日も選択可能。
   const [evalDate, setEvalDate]         = useState<string>(getTodayLocal());
   const [submitting, setSubmitting]     = useState(false);
   const [submitError,setSubmitError]    = useState('');
@@ -126,8 +131,7 @@ export default function TeacherEvalPage() {
   const [expandedCommentTaskId, setExpandedCommentTaskId] = useState<string | null>(null);
 
   // -----------------------------------------------------------------
-  // ★ 追加: 選択日（evalDate）基準の「評価済みタスクID」を取得。
-  //         evalDate が変わるたびに自動で再取得され、二重評価を防止する。
+  // 選択日基準の「評価済みタスクID」を取得
   // -----------------------------------------------------------------
   const {
     data: evaluatedTaskIdsForDate,
@@ -203,7 +207,6 @@ export default function TeacherEvalPage() {
       const payload: TeacherEvalPayload = {
         action:      'evaluateStudent',
         student_id:  studentId,
-        // ★ 追加: 選択中の評価対象日を渡す（未指定なら当日扱いだが、明示的に渡す）。
         date:        evalDate,
         evaluations,
       };
@@ -220,7 +223,6 @@ export default function TeacherEvalPage() {
 
       mutate();
       mutateTeacherList();
-      // ★ 追加: 選択日の評価済みタスクIDを再取得し、即座に二重評価を防ぐ。
       mutateEvaluatedTaskIds();
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : '評価の送信に失敗しました');
@@ -273,16 +275,27 @@ export default function TeacherEvalPage() {
 
   const { student, status, taskMaster, recentLogs } = data;
   const titleMaster: TitleMasterEntry[] = data.titleMaster ?? [];
+  const teacherEvals: TeacherEvaluationEntry[] = data.teacherEvals ?? [];
+  
   const sortedTasks = [...taskMaster].sort((a, b) => a.display_order - b.display_order);
-  // ★ 修正: 本日固定の todayEvaluatedTaskIds ではなく、
-  //         選択日（evalDate）基準で取得した評価済みタスクIDを使う。
-  //         これにより「選んだ日付にすでに評価済みなら二重評価できない」を実現する。
   const evaluatedTaskIds = evaluatedTaskIdsForDate ?? [];
   const evaluableTasks = sortedTasks.filter(t => !evaluatedTaskIds.includes(t.id));
   const allTasksDone = evaluableTasks.length === 0;
   const lvColor = levelColor(status.level);
   const title   = titleForLevel(status.level, titleMaster);
   const gradeLabel = formatGrade(student.grade);
+
+  // -----------------------------------------------------------------
+  // ★ 追加: 「他の先生」が直近で付けたコメント付き評価を最大5件取得
+  // -----------------------------------------------------------------
+  const otherTeacherComments = [...teacherEvals]
+    .filter(e => e.comment && e.comment.trim() !== '' && e.evaluator_id !== teacherId)
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, 5)
+    .map(e => {
+      const task = taskMaster.find(t => t.id === e.task_id);
+      return { ...e, task_text: task?.task_text ?? '不明な課題' };
+    });
 
   // -----------------------------------------------------------------
   // メインビュー
@@ -355,7 +368,7 @@ export default function TeacherEvalPage() {
           </div>
         </section>
 
-        {/* ★ 追加: 日付選択（過去の稽古をさかのぼって評価できる） */}
+        {/* 日付選択 */}
         <section style={styles.dateCard}>
           <label htmlFor="eval-date" style={styles.dateLabel}>
             <span style={styles.dateLabelIcon}>📅</span>
@@ -371,7 +384,7 @@ export default function TeacherEvalPage() {
           />
         </section>
 
-        {/* 直近の稽古ログ */}
+        {/* 直近の稽古ログ（生徒の自己評価） */}
         {recentLogs && recentLogs.length > 0 && (
           <section style={styles.recentSection}>
             <div style={styles.recentHeader}>
@@ -382,7 +395,6 @@ export default function TeacherEvalPage() {
               {recentLogs.slice(0, 5).map((log, i) => (
                 <li key={i} style={styles.recentItem}>
                   <span style={styles.recentDate}>
-                    {/* ★ 修正：安全な日付パース関数を使用 */}
                     {formatShortDate(log.date)}
                   </span>
                   <span style={styles.recentText}>
@@ -391,6 +403,40 @@ export default function TeacherEvalPage() {
                       {' '}★{log.score}
                     </span>
                   </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
+        {/* ★ 追加: 他の先生からの評価・コメント共有 */}
+        {otherTeacherComments.length > 0 && (
+          <section style={{ ...styles.recentSection, marginTop: '12px', borderLeft: `4px solid #FFD700` }}>
+            <div style={styles.recentHeader}>
+              <span style={styles.recentIcon}>👨‍🏫</span>
+              <h3 style={styles.recentTitle}>他の先生からの声</h3>
+            </div>
+            <ul style={styles.recentList}>
+              {otherTeacherComments.map((comment, i) => (
+                <li key={i} style={{ ...styles.recentItem, flexDirection: 'column', alignItems: 'flex-start', gap: '4px', borderLeft: 'none', paddingLeft: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <span style={styles.recentDate}>{formatShortDate(comment.date)}</span>
+                    <span style={{ fontSize: '12px', fontWeight: 900, color: '#FFFFFF' }}>
+                      {teacherDisplayName(comment.evaluator_name)}
+                    </span>
+                    <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.7)' }}>
+                      評価
+                    </span>
+                    <span style={{ fontSize: '13px', color: '#FFB400', fontWeight: 900, textShadow: '0 0 4px rgba(255,215,0,0.5)' }}>
+                      {'★'.repeat(comment.score)}{'☆'.repeat(5 - comment.score)}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '14px', fontWeight: 800, color: '#FFD700', paddingLeft: '8px', fontStyle: 'italic', lineHeight: 1.4 }}>
+                    「{comment.comment}」
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)', paddingLeft: '12px' }}>
+                    対象課題: {comment.task_text}
+                  </div>
                 </li>
               ))}
             </ul>

@@ -1848,7 +1848,6 @@ export async function fetchMinigameRanking(): Promise<MinigameRankingResponse> {
     supabase
       .from('minigame_scores')
       .select('user_id, created_at, average_time')
-      .gt('average_time', 0) // ★ 0.000秒バグ（不正データ）の除外（SQL側の第一防御）
       .order('created_at', { ascending: true }),
     supabase.from('users').select('id, name').eq('role', 'student'),
   ]);

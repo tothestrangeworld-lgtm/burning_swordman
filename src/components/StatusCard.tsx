@@ -54,7 +54,7 @@ export default function StatusCard({ userName, status, titleMaster, xpHistory = 
       </div>
 
       <div style={styles.levelArea}>
-        <div style={styles.levelLabel}>修行度</div>
+        <div style={styles.levelLabel}>Lv.</div>
         <div style={styles.levelValueRow}>
           <span style={{ ...styles.levelNumber, color: lvColor }}>{level}</span>
           <span style={styles.levelMax}>/ {MAX_LEVEL}</span>
