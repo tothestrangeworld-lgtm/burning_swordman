@@ -7,6 +7,9 @@
 // Phase 6.2: ランキングを { topBest, topAverage, history } 構造へ拡張
 //            （平均タイム/最速タイムのタブ切替対応・0以下のバグデータは完全除外）
 // Phase 8:   「なかま」機能（門下生一覧＋応援システム）API追加
+// Phase 8.1: なかま散布図対応
+//            ・NakamaEntry に total_practice_days（累計稽古日数）を追加
+//            ・NakamaListResponse に my_data（自分自身のエントリ）を追加
 // =====================================================================
 
 import useSWR, { SWRConfiguration, SWRResponse } from 'swr';
@@ -138,6 +141,30 @@ function resolveDayRange(date?: string): { startIso: string; endIso: string } {
   ).toISOString();
 
   return { startIso, endIso };
+}
+
+// =====================================================================
+// 共通: xp_history の date 群から「累計稽古日数」を算出するヘルパー
+// -------------------------------------------------------------------
+// ★ Phase 8.1 追加:
+//   xp_history.date（timestamptz）を JST 基準の YYYY-MM-DD に丸め、
+//   ユニークな日付の件数を「累計稽古日数」として数える。
+//   ・UTC 変換で前日へズレないよう +9h してから日付を切り出す。
+//   ・空配列・null 混入にも安全に対応する。
+// =====================================================================
+function countUniquePracticeDays(
+  dates: Array<string | null | undefined>,
+): number {
+  const daySet = new Set<string>();
+  for (const d of dates) {
+    if (!d) continue;
+    const t = new Date(d).getTime();
+    if (Number.isNaN(t)) continue;
+    // JST 基準の YYYY-MM-DD に丸める。
+    const jstDay = new Date(t + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    daySet.add(jstDay);
+  }
+  return daySet.size;
 }
 
 // =====================================================================
@@ -2131,6 +2158,7 @@ export async function updateUserPasscode(
 
 // =====================================================================
 // ★★★ Phase 8: 「なかま」機能（門下生一覧＋応援システム）API ★★★
+// ★★★ Phase 8.1: なかま散布図対応（累計稽古日数・自分データ追加） ★★★
 // =====================================================================
 
 /**
@@ -2138,6 +2166,8 @@ export async function updateUserPasscode(
  * ★ プライバシー保護のため、公開するのは
  * 名前 / 称号 / レベル / 合計XP / 最終稽古日 のみ。
  * 自己評価・先生評価・コメント・弱点等は一切含めない。
+ * ★ Phase 8.1: total_practice_days（累計稽古日数）を追加。
+ *   散布図の横軸に用いる（xp_history の date のユニーク日数）。
  */
 export interface NakamaEntry {
   user_id:            string;
@@ -2153,14 +2183,21 @@ export interface NakamaEntry {
   isBurning:          boolean;
   /** 本日、自分がこのなかまを既に応援済みか（1日1回制限用） */
   cheeredTodayByMe:   boolean;
+  /** ★ Phase 8.1: 累計稽古日数（xp_history の date ユニーク日数・散布図の横軸） */
+  total_practice_days: number;
 }
 
 /**
  * なかま一覧レスポンス
+ * ★ Phase 8.1: my_data（自分自身のエントリ）を追加。
+ *   散布図に「自分」もプロットできるようにするため。
+ *   my_data.cheeredTodayByMe は常に false（自分は自分を応援できないため）。
  */
 export interface NakamaListResponse {
   /** 自分以外の門下生一覧（合計XP降順） */
   nakama:      NakamaEntry[];
+  /** ★ Phase 8.1: 自分自身のエントリ（グラフ上の強調プロット用） */
+  my_data:     NakamaEntry;
   /** 自分が本日応援した人数（参考表示用） */
   cheeredToday: number;
 }
@@ -2195,6 +2232,8 @@ const CHEER_XP = 5;
  * ・user_status から レベル・合計XP・最終稽古日 を結合
  * ・title_master から 称号 を導出
  * ・本日自分が応援済みの相手（cheer_logs）を結合
+ * ・★ Phase 8.1: xp_history から全生徒（自分含む）の累計稽古日数を集計
+ * ・★ Phase 8.1: 自分自身のエントリ（my_data）も組み立てて返す
  * ★ プライベートな稽古内容（課題・技・評価・コメント）は一切取得しない。
  */
 export async function fetchNakamaListApi(
@@ -2207,13 +2246,26 @@ export async function fetchNakamaListApi(
   // 本日（JST）の範囲を算出（応援の1日1回判定用）。
   const { startIso, endIso } = resolveDayRange(undefined);
 
-  const [studentsRes, statusRes, titleRes, myCheersTodayRes] = await Promise.all([
+  const [
+    studentsRes,
+    myUserRes,
+    statusRes,
+    titleRes,
+    myCheersTodayRes,
+    xpHistoryRes,
+  ] = await Promise.all([
     // ★ 自分以外の門下生（公開情報のみ）
     supabase
       .from('users')
       .select('id, name, grade')
       .eq('role', 'student')
       .neq('id', myUserId),
+    // ★ Phase 8.1: 自分自身のユーザー情報（my_data 組み立て用）
+    supabase
+      .from('users')
+      .select('id, name, grade, role')
+      .eq('id', myUserId)
+      .single(),
     // ステータス（全生徒分・後でMap結合）
     supabase
       .from('user_status')
@@ -2230,12 +2282,23 @@ export async function fetchNakamaListApi(
       .eq('from_user_id', myUserId)
       .gte('cheered_at', startIso)
       .lt('cheered_at', endIso),
+    // ★ Phase 8.1: 全生徒分の xp_history.date（累計稽古日数の集計用）
+    //   date と user_id のみ取得し、ユーザーごとにユニーク日数を数える。
+    supabase
+      .from('xp_history')
+      .select('user_id, date'),
   ]);
 
   throwIfError(studentsRes.error, 'fetchNakamaList:students');
+  throwIfError(myUserRes.error, 'fetchNakamaList:my_user');
   throwIfError(statusRes.error, 'fetchNakamaList:user_status');
   throwIfError(titleRes.error, 'fetchNakamaList:title_master');
   throwIfError(myCheersTodayRes.error, 'fetchNakamaList:my_cheers_today');
+  throwIfError(xpHistoryRes.error, 'fetchNakamaList:xp_history');
+
+  if (!myUserRes.data) {
+    throw new Error('自分のユーザー情報が見つかりません');
+  }
 
   const titleMaster: TitleMasterEntry[] = (titleRes.data ?? []).map((t) => ({
     level: t.level,
@@ -2251,8 +2314,23 @@ export async function fetchNakamaListApi(
     (myCheersTodayRes.data ?? []).map((c) => c.to_user_id),
   );
 
+  // ★ Phase 8.1: ユーザーごとに xp_history.date を集めて累計稽古日数を算出する。
+  //   まず user_id → date[] のマップを組み、後で countUniquePracticeDays で数える。
+  const historyDatesByUser = new Map<string, Array<string | null>>();
+  for (const h of xpHistoryRes.data ?? []) {
+    const arr = historyDatesByUser.get(h.user_id) ?? [];
+    arr.push(h.date);
+    historyDatesByUser.set(h.user_id, arr);
+  }
+
   const now = Date.now();
-  const nakama: NakamaEntry[] = (studentsRes.data ?? []).map((u) => {
+
+  // ★ 1人分の NakamaEntry を組み立てる共通ヘルパー。
+  //   isSelf=true のときは cheeredTodayByMe を常に false にする（自分は応援対象外）。
+  const buildEntry = (
+    u: { id: string; name: string; grade?: string | number | null },
+    isSelf: boolean,
+  ): NakamaEntry => {
     const st = statusMap.get(u.id);
     const last = st?.last_practice_date ?? null;
     const level = st?.level ?? 1;
@@ -2266,6 +2344,11 @@ export async function fetchNakamaListApi(
     // 3日以内なら「燃えている」。
     const isBurning = days != null && days <= 3;
 
+    // ★ 累計稽古日数（xp_history の date ユニーク日数）。
+    const totalPracticeDays = countUniquePracticeDays(
+      historyDatesByUser.get(u.id) ?? [],
+    );
+
     return {
       user_id:               u.id,
       name:                  u.name,
@@ -2276,15 +2359,32 @@ export async function fetchNakamaListApi(
       last_practice_date:    last,
       daysSinceLastPractice: days,
       isBurning,
-      cheeredTodayByMe:      cheeredSet.has(u.id),
+      cheeredTodayByMe:      isSelf ? false : cheeredSet.has(u.id),
+      total_practice_days:   totalPracticeDays,
     };
-  });
+  };
+
+  // --- 自分以外のなかま一覧 ---
+  const nakama: NakamaEntry[] = (studentsRes.data ?? []).map((u) =>
+    buildEntry(u, false),
+  );
 
   // 合計XP降順で並べる（強い剣士が上位）。
   nakama.sort((a, b) => b.total_xp - a.total_xp);
 
+  // --- ★ Phase 8.1: 自分自身のエントリ（グラフの強調プロット用） ---
+  const myData: NakamaEntry = buildEntry(
+    {
+      id:    myUserRes.data.id,
+      name:  myUserRes.data.name,
+      grade: myUserRes.data.grade,
+    },
+    true,
+  );
+
   return {
     nakama,
+    my_data:      myData,
     cheeredToday: cheeredSet.size,
   };
 }
