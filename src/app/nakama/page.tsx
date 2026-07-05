@@ -1,18 +1,20 @@
 // src/app/nakama/page.tsx
 // =====================================================================
-// 燃えろ剣士 - なかま（門下生一覧・応援）画面
-// 他の門下生の頑張りを見てモチベーションを高め合う「燃える絆」のページ
+// 燃えろ剣士 - なかま（門下生・切磋琢磨マップ）画面
+// 他の門下生の頑張りを散布図で可視化し、切磋琢磨のモチベーションを高め合う
 // Phase 8:   新規実装
 // Phase 8.1: 散布図（2軸グラフ）ビュー追加
-//            ・リスト表示 / グラフ表示 のタブ切替（初期はリスト）
-//            ・Recharts ScatterChart で X=累計稽古日数 / Y=レベル をプロット
-//            ・プロットタップで詳細＋応援ボタン付きモーダルを表示
-//            ・自分のプロットはゴールドで強調（大きく光る）
+// Phase 8.2: UI/UXリファクタリング
+//            ・リスト表示／タブUIを廃止し、常に散布図のみを表示
+//            ・巨大モーダルを廃止し、プロット横のインラインポップアップへ変更
+//              （外側タップでスッと閉じる・画面端は座標を自動フリップ）
+//            ・なかまのプロット色を青系（水色 #4DB8FF）へ変更し、
+//              金色（自分）とのコントラストを明確化
 // =====================================================================
 
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ResponsiveContainer,
@@ -33,9 +35,14 @@ import { getAuthUser } from '@/lib/auth';
 import { THEME, levelColor } from '@/types';
 
 // =====================================================================
-// 表示モード（タブ）
+// 配色定数（視認性向上）
+// -------------------------------------------------------------------
+// ★ Phase 8.2: なかま＝青系（水色）、自分＝金色 で明確に区別する。
 // =====================================================================
-type ViewMode = 'list' | 'graph';
+const NAKAMA_COLOR = '#4DB8FF';      // なかま（水色）
+const NAKAMA_STROKE = '#1E88E5';     // なかまの縁取り（濃い青）
+const SELF_COLOR = '#FFD700';        // 自分（ゴールド）
+const SELF_STROKE = '#FFF7C0';       // 自分の縁取り（淡い金）
 
 // 散布図のプロット1点（Recharts の data 用に整形）
 interface ScatterPoint {
@@ -43,8 +50,20 @@ interface ScatterPoint {
   y:      number;       // レベル
   z:      number;       // ドットサイズ（自分を大きく）
   isSelf: boolean;      // 自分かどうか（色・サイズ切替）
-  entry:  NakamaEntry;  // 元データ（モーダル表示用）
+  entry:  NakamaEntry;  // 元データ（ポップアップ表示用）
 }
+
+// ★ インラインポップアップの状態（選択中データ＋クリック座標）
+interface PopupState {
+  entry: NakamaEntry;
+  // グラフコンテナ左上を基準としたプロットの座標（px）
+  cx:    number;
+  cy:    number;
+}
+
+// ポップアップのおおよそのサイズ（フリップ判定に使用）
+const POPUP_W = 240;
+const POPUP_H = 220;
 
 export default function NakamaPage() {
   const router = useRouter();
@@ -71,15 +90,15 @@ export default function NakamaPage() {
   // ---------------------------------------------------------------
   const { data, error, isLoading, mutate } = useNakamaListSWR();
 
-  // 表示モード（リスト／グラフ）。初期はリスト。
-  const [viewMode, setViewMode] = useState<ViewMode>('list');
-
   // 応援中のユーザーID（連打防止＆スピナー表示用）
   const [cheeringId, setCheeringId] = useState<string | null>(null);
   // トースト（応援結果のフィードバック）
   const [toast, setToast] = useState<{ text: string; ok: boolean } | null>(null);
-  // ★ グラフ上で選択中のなかま（詳細モーダル表示用）
-  const [selected, setSelected] = useState<NakamaEntry | null>(null);
+  // ★ インラインポップアップの状態（null で非表示）
+  const [popup, setPopup] = useState<PopupState | null>(null);
+
+  // グラフ描画エリアの実寸を測るための ref（ポップアップ座標のフリップ計算用）
+  const chartWrapRef = useRef<HTMLDivElement | null>(null);
 
   // ---------------------------------------------------------------
   // 応援ハンドラ
@@ -94,10 +113,12 @@ export default function NakamaPage() {
       setToast({ text: res.message, ok: res.cheered });
       // 一覧を再取得（応援済みフラグ・XPを即反映）
       await mutate();
-      // モーダルを開いている場合は、選択中データも最新へ差し替える。
-      if (selected && selected.user_id === nakama.user_id && res.cheered) {
-        setSelected({ ...selected, cheeredTodayByMe: true });
-      }
+      // ポップアップを開いている場合は、選択中データも最新へ差し替える。
+      setPopup((prev) =>
+        prev && prev.entry.user_id === nakama.user_id && res.cheered
+          ? { ...prev, entry: { ...prev.entry, cheeredTodayByMe: true } }
+          : prev,
+      );
     } catch (e) {
       setToast({
         text: e instanceof Error ? e.message : '応援に失敗しました…',
@@ -156,6 +177,37 @@ export default function NakamaPage() {
   }, [scatterData]);
 
   // ---------------------------------------------------------------
+  // ★ ポップアップの表示位置を計算（画面端で見切れないよう自動フリップ）
+  // -------------------------------------------------------------------
+  // プロットの右側に出すのが基本。右にはみ出すなら左へ。
+  // 縦は中央寄せを基本に、上下にはみ出す分だけクランプする。
+  // ---------------------------------------------------------------
+  const popupPos = useMemo(() => {
+    if (!popup) return null;
+    const wrap = chartWrapRef.current;
+    const wrapW = wrap?.clientWidth ?? 320;
+    const wrapH = wrap?.clientHeight ?? 360;
+
+    const gap = 14; // プロットとの間隔
+
+    // --- 横位置: 基本は右側。右に収まらなければ左側へフリップ。 ---
+    let left = popup.cx + gap;
+    if (left + POPUP_W > wrapW) {
+      left = popup.cx - gap - POPUP_W;
+    }
+    // それでも左に収まらない（＝コンテナが狭い）場合は端でクランプ。
+    if (left < 4) left = 4;
+    if (left + POPUP_W > wrapW - 4) left = Math.max(4, wrapW - 4 - POPUP_W);
+
+    // --- 縦位置: プロット中心に対して縦センター。上下端をクランプ。 ---
+    let top = popup.cy - POPUP_H / 2;
+    if (top < 4) top = 4;
+    if (top + POPUP_H > wrapH - 4) top = Math.max(4, wrapH - 4 - POPUP_H);
+
+    return { left, top };
+  }, [popup]);
+
+  // ---------------------------------------------------------------
   // ローディング
   // ---------------------------------------------------------------
   if (!user || isLoading) {
@@ -180,10 +232,10 @@ export default function NakamaPage() {
     );
   }
 
-  const { nakama, cheeredToday } = data;
+  const { cheeredToday } = data;
 
   // ---------------------------------------------------------------
-  // メインビュー
+  // メインビュー（常に散布図のみ）
   // ---------------------------------------------------------------
   return (
     <div style={styles.outer}>
@@ -195,206 +247,156 @@ export default function NakamaPage() {
         <header style={styles.headerBar}>
           <div style={styles.headerLeft}>
             <span style={styles.headerLogo}>🔥</span>
-            <span style={styles.headerTitle}>なかまの修行</span>
+            <span style={styles.headerTitle}>なかまの修行マップ</span>
           </div>
           <div style={styles.cheerCountBadge}>
             今日の応援 <strong style={{ color: THEME.accent }}>{cheeredToday}</strong> 人
           </div>
         </header>
 
-        {/* ★ 表示切替タブ（リスト / グラフ） */}
-        <div style={styles.tabBar} role="tablist" aria-label="表示切替">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={viewMode === 'list'}
-            onClick={() => setViewMode('list')}
-            style={{
-              ...styles.tabBtn,
-              ...(viewMode === 'list' ? styles.tabBtnActive : {}),
-            }}
-          >
-            <span style={styles.tabEmoji}>📋</span>
-            <span>リスト表示</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={viewMode === 'graph'}
-            onClick={() => setViewMode('graph')}
-            style={{
-              ...styles.tabBtn,
-              ...(viewMode === 'graph' ? styles.tabBtnActive : {}),
-            }}
-          >
-            <span style={styles.tabEmoji}>📊</span>
-            <span>グラフ表示</span>
-          </button>
-        </div>
-
         {/* 説明バナー */}
         <div style={styles.infoBanner}>
           <span style={{ fontSize: '22px' }}>🎌</span>
           <div>
-            <div style={styles.infoTitle}>なかまを応援しよう！</div>
+            <div style={styles.infoTitle}>なかまと切磋琢磨しよう！</div>
             <div style={styles.infoSub}>
-              {viewMode === 'list' ? (
-                <>
-                  応援すると おたがい <strong style={{ color: THEME.accent }}>5 XP</strong> ゲット！
-                  （1人につき1日1回まで）
-                </>
-              ) : (
-                <>
-                  ドットをタップすると くわしく見れるよ！
-                  <strong style={{ color: THEME.accent }}> 金色</strong>のドットが「キミ」だ🔥
-                </>
-              )}
+              ドットをタップすると くわしく見れるよ！
+              <strong style={{ color: SELF_COLOR }}> 金色</strong>のドットが「キミ」だ🔥
             </div>
           </div>
         </div>
 
         {/* ============================================================
-            リスト表示
-        ============================================================ */}
-        {viewMode === 'list' && (
-          <>
-            {nakama.length === 0 ? (
-              <div style={styles.emptyBox}>
-                <div style={{ fontSize: '40px', marginBottom: 8 }}>🥷</div>
-                <div style={styles.emptyText}>まだ ほかの門下生がいないよ</div>
-              </div>
-            ) : (
-              <div style={styles.list}>
-                {nakama.map((n, idx) => (
-                  <NakamaRow
-                    key={n.user_id}
-                    nakama={n}
-                    rank={idx + 1}
-                    cheering={cheeringId === n.user_id}
-                    disabled={cheeringId !== null}
-                    onCheer={() => handleCheer(n)}
-                  />
-                ))}
-              </div>
-            )}
-          </>
-        )}
-
-        {/* ============================================================
             グラフ表示（散布図）
         ============================================================ */}
-        {viewMode === 'graph' && (
-          <div style={styles.graphCard}>
-            {/* 凡例 */}
-            <div style={styles.graphLegend}>
-              <span style={styles.legendItem}>
-                <span style={{ ...styles.legendDot, backgroundColor: THEME.accent }} />
-                なかま
-              </span>
-              <span style={styles.legendItem}>
-                <span
-                  style={{
-                    ...styles.legendDot,
-                    background: 'radial-gradient(circle, #FFF7C0 0%, #FFD700 55%, #FFA000 100%)',
-                    boxShadow: '0 0 8px rgba(255,215,0,0.9)',
+        <div style={styles.graphCard}>
+          {/* 凡例 */}
+          <div style={styles.graphLegend}>
+            <span style={styles.legendItem}>
+              <span
+                style={{
+                  ...styles.legendDot,
+                  backgroundColor: NAKAMA_COLOR,
+                  border:          `2px solid ${NAKAMA_STROKE}`,
+                }}
+              />
+              なかま
+            </span>
+            <span style={styles.legendItem}>
+              <span
+                style={{
+                  ...styles.legendDot,
+                  background: 'radial-gradient(circle, #FFF7C0 0%, #FFD700 55%, #FFA000 100%)',
+                  boxShadow: '0 0 8px rgba(255,215,0,0.9)',
+                }}
+              />
+              キミ
+            </span>
+          </div>
+
+          {/* 散布図本体（ポップアップを重ねるため position: relative） */}
+          <div ref={chartWrapRef} style={styles.chartWrap}>
+            <ResponsiveContainer width="100%" height="100%">
+              <ScatterChart
+                margin={{ top: 16, right: 20, bottom: 40, left: 8 }}
+              >
+                <CartesianGrid
+                  stroke="rgba(255,255,255,0.10)"
+                  strokeDasharray="3 3"
+                />
+                <XAxis
+                  type="number"
+                  dataKey="x"
+                  name="累計稽古日数"
+                  domain={[0, axisRange.xMax]}
+                  tick={{ fill: THEME.textMuted, fontSize: 11 }}
+                  stroke="rgba(255,255,255,0.25)"
+                  label={{
+                    value:    '累計稽古日数（日）',
+                    position: 'bottom',
+                    offset:   16,
+                    fill:     THEME.textSubtle,
+                    fontSize: 12,
                   }}
                 />
-                キミ
-              </span>
-            </div>
-
-            {/* 散布図本体 */}
-            <div style={styles.chartWrap}>
-              <ResponsiveContainer width="100%" height="100%">
-                <ScatterChart
-                  margin={{ top: 16, right: 20, bottom: 40, left: 8 }}
+                <YAxis
+                  type="number"
+                  dataKey="y"
+                  name="レベル"
+                  domain={[0, axisRange.yMax]}
+                  tick={{ fill: THEME.textMuted, fontSize: 11 }}
+                  stroke="rgba(255,255,255,0.25)"
+                  label={{
+                    value:    'レベル',
+                    angle:    -90,
+                    position: 'insideLeft',
+                    offset:   16,
+                    fill:     THEME.textSubtle,
+                    fontSize: 12,
+                  }}
+                />
+                <ZAxis type="number" dataKey="z" range={[80, 400]} />
+                <Scatter
+                  data={scatterData}
+                  isAnimationActive={false}
+                  onClick={(pt: any) => {
+                    // Recharts はクリックした点の payload と描画座標(cx/cy)を渡す。
+                    const entry = pt?.payload?.entry as NakamaEntry | undefined;
+                    if (!entry) return;
+                    // cx/cy はグラフ描画領域内の座標（px）。ポップアップ配置に使う。
+                    const cx = typeof pt?.cx === 'number' ? pt.cx : 0;
+                    const cy = typeof pt?.cy === 'number' ? pt.cy : 0;
+                    setPopup({ entry, cx, cy });
+                  }}
                 >
-                  <CartesianGrid
-                    stroke="rgba(255,255,255,0.10)"
-                    strokeDasharray="3 3"
-                  />
-                  <XAxis
-                    type="number"
-                    dataKey="x"
-                    name="累計稽古日数"
-                    domain={[0, axisRange.xMax]}
-                    tick={{ fill: THEME.textMuted, fontSize: 11 }}
-                    stroke="rgba(255,255,255,0.25)"
-                    label={{
-                      value:    '累計稽古日数（日）',
-                      position: 'bottom',
-                      offset:   16,
-                      fill:     THEME.textSubtle,
-                      fontSize: 12,
-                    }}
-                  />
-                  <YAxis
-                    type="number"
-                    dataKey="y"
-                    name="レベル"
-                    domain={[0, axisRange.yMax]}
-                    tick={{ fill: THEME.textMuted, fontSize: 11 }}
-                    stroke="rgba(255,255,255,0.25)"
-                    label={{
-                      value:    'レベル',
-                      angle:    -90,
-                      position: 'insideLeft',
-                      offset:   16,
-                      fill:     THEME.textSubtle,
-                      fontSize: 12,
-                    }}
-                  />
-                  <ZAxis type="number" dataKey="z" range={[80, 400]} />
-                  <Scatter
-                    data={scatterData}
-                    isAnimationActive={false}
-                    onClick={(pt: any) => {
-                      // Recharts はクリックした点の payload を渡す。
-                      const entry = pt?.payload?.entry as NakamaEntry | undefined;
-                      if (entry) setSelected(entry);
-                    }}
-                  >
-                    {scatterData.map((p, i) => (
-                      <Cell
-                        key={`cell-${i}`}
-                        fill={p.isSelf ? '#FFD700' : THEME.accent}
-                        stroke={p.isSelf ? '#FFF7C0' : THEME.borderSolid}
-                        strokeWidth={p.isSelf ? 3 : 1}
-                        style={{
-                          cursor: 'pointer',
-                          filter: p.isSelf
-                            ? 'drop-shadow(0 0 8px rgba(255,215,0,0.9))'
-                            : 'none',
-                        }}
-                      />
-                    ))}
-                  </Scatter>
-                </ScatterChart>
-              </ResponsiveContainer>
-            </div>
+                  {scatterData.map((p, i) => (
+                    <Cell
+                      key={`cell-${i}`}
+                      fill={p.isSelf ? SELF_COLOR : NAKAMA_COLOR}
+                      stroke={p.isSelf ? SELF_STROKE : NAKAMA_STROKE}
+                      strokeWidth={p.isSelf ? 3 : 1.5}
+                      style={{
+                        cursor: 'pointer',
+                        filter: p.isSelf
+                          ? 'drop-shadow(0 0 8px rgba(255,215,0,0.9))'
+                          : 'none',
+                      }}
+                    />
+                  ))}
+                </Scatter>
+              </ScatterChart>
+            </ResponsiveContainer>
 
-            <div style={styles.graphHint}>
-              右上にいくほど「たくさん稽古して、強い剣士」だ！キミはどこかな？🔥
-            </div>
+            {/* ★ インラインポップアップ（プロット横にコンパクト表示） */}
+            {popup && popupPos && (
+              <>
+                {/* 透明オーバーレイ: 外側タップで閉じる */}
+                <div
+                  style={styles.popupCatcher}
+                  onClick={() => setPopup(null)}
+                  aria-hidden="true"
+                />
+                <InlinePopup
+                  entry={popup.entry}
+                  left={popupPos.left}
+                  top={popupPos.top}
+                  cheering={cheeringId === popup.entry.user_id}
+                  disabled={cheeringId !== null}
+                  onCheer={() => handleCheer(popup.entry)}
+                  onClose={() => setPopup(null)}
+                />
+              </>
+            )}
           </div>
-        )}
+
+          <div style={styles.graphHint}>
+            右上にいくほど「たくさん稽古して、強い剣士」だ！キミはどこかな？🔥
+          </div>
+        </div>
 
         {/* フッター余白（ボトムナビ分） */}
         <div style={{ height: 80 }} />
       </div>
-
-      {/* ============================================================
-          詳細モーダル（グラフのドットタップ時）
-      ============================================================ */}
-      {selected && (
-        <NakamaDetailModal
-          nakama={selected}
-          cheering={cheeringId === selected.user_id}
-          disabled={cheeringId !== null}
-          onCheer={() => handleCheer(selected)}
-          onClose={() => setSelected(null)}
-        />
-      )}
 
       {/* トースト */}
       {toast && (
@@ -420,11 +422,6 @@ export default function NakamaPage() {
           0%, 100% { box-shadow: 0 0 0 0 rgba(255,68,68,0.0), inset 0 0 0 0 rgba(255,68,68,0.0); }
           50%      { box-shadow: 0 0 14px 2px rgba(255,68,68,0.35), inset 0 0 8px 0 rgba(255,140,0,0.18); }
         }
-        @keyframes nakama_cheer_pop {
-          0%   { transform: scale(1); }
-          40%  { transform: scale(1.25); }
-          100% { transform: scale(1); }
-        }
         @keyframes nakama_toast_in {
           0%   { transform: translate(-50%, 20px); opacity: 0; }
           100% { transform: translate(-50%, 0);    opacity: 1; }
@@ -437,13 +434,9 @@ export default function NakamaPage() {
           from { transform: rotate(0deg); }
           to   { transform: rotate(360deg); }
         }
-        @keyframes nakama_modal_in {
-          0%   { transform: translateY(24px) scale(0.96); opacity: 0; }
-          100% { transform: translateY(0) scale(1);       opacity: 1; }
-        }
-        @keyframes nakama_overlay_in {
-          0%   { opacity: 0; }
-          100% { opacity: 1; }
+        @keyframes nakama_popup_in {
+          0%   { transform: scale(0.85); opacity: 0; }
+          100% { transform: scale(1);    opacity: 1; }
         }
       `}</style>
     </div>
@@ -451,253 +444,139 @@ export default function NakamaPage() {
 }
 
 // =====================================================================
-// なかま1行（カード）
+// ★ インラインポップアップ（散布図のプロット横に出るコンパクトカード）
+// -------------------------------------------------------------------
+// 氏名 / 称号 / レベル / 獲得経験値 / 累計稽古日数 / 最終稽古日 を表示し、
+// 応援ボタンを含む。自分自身の場合は応援ボタンを出さない。
+// left/top はグラフコンテナ左上を基準とした絶対座標（px）。
 // =====================================================================
-function NakamaRow({
-  nakama,
-  rank,
+function InlinePopup({
+  entry,
+  left,
+  top,
   cheering,
   disabled,
   onCheer,
+  onClose,
 }: {
-  nakama:   NakamaEntry;
-  rank:     number;
+  entry:    NakamaEntry;
+  left:     number;
+  top:      number;
   cheering: boolean;
   disabled: boolean;
   onCheer:  () => void;
+  onClose:  () => void;
 }) {
-  const lvColor = levelColor(nakama.level);
-  const alreadyCheered = nakama.cheeredTodayByMe;
+  const lvColor = levelColor(entry.level);
+  const alreadyCheered = entry.cheeredTodayByMe;
 
-  // 最終稽古日の表示（YYYY-MM-DD / 「まだ」）
+  // 自分自身かどうか（自分には応援ボタンを出さない）。
+  const me = typeof window !== 'undefined' ? getAuthUser() : null;
+  const isSelf = me?.id === entry.user_id;
+
   const lastLabel = formatLastPractice(
-    nakama.last_practice_date,
-    nakama.daysSinceLastPractice,
+    entry.last_practice_date,
+    entry.daysSinceLastPractice,
   );
-
-  // ランクメダル（上位3名）
-  const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : null;
 
   return (
     <div
       style={{
-        ...styles.row,
-        ...(nakama.isBurning ? styles.rowBurning : {}),
+        ...styles.popup,
+        left,
+        top,
+        width: POPUP_W,
+        borderColor: isSelf ? SELF_STROKE : NAKAMA_STROKE,
       }}
+      // ポップアップ内クリックは外側キャッチャーへ伝播させない。
+      onClick={(e) => e.stopPropagation()}
+      role="dialog"
+      aria-label={`${entry.name}のじょうほう`}
     >
-      {/* 順位 */}
-      <div style={styles.rankCol}>
-        {medal ? (
-          <span style={styles.medal}>{medal}</span>
-        ) : (
-          <span style={styles.rankNum}>{rank}</span>
-        )}
-      </div>
+      {/* 閉じるボタン */}
+      <button
+        type="button"
+        style={styles.popupClose}
+        onClick={onClose}
+        aria-label="閉じる"
+      >
+        ✕
+      </button>
 
-      {/* 燃え盛りアイコン or レベルバッジ */}
-      <div style={styles.flameCol}>
-        {nakama.isBurning ? (
-          <span style={styles.burningFlame} aria-label="燃えている">🔥</span>
-        ) : (
-          <span style={styles.coldMark} aria-hidden="true">💤</span>
-        )}
-      </div>
-
-      {/* 名前・称号・ステータス */}
-      <div style={styles.infoCol}>
-        <div style={styles.nameRow}>
-          <span style={styles.name}>{nakama.name}</span>
-          {nakama.grade && (
-            <span style={styles.gradeBadge}>{nakama.grade}年</span>
-          )}
+      {/* ヘッダー（名前・称号） */}
+      <div style={styles.popupHead}>
+        <span style={styles.popupFlame}>
+          {isSelf ? '⭐' : entry.isBurning ? '🔥' : '💤'}
+        </span>
+        <div style={styles.popupNameCol}>
+          <div style={styles.popupNameRow}>
+            <span style={styles.popupName}>{entry.name}</span>
+            {entry.grade && (
+              <span style={styles.gradeBadge}>{entry.grade}年</span>
+            )}
+            {isSelf && <span style={styles.selfBadge}>キミ</span>}
+          </div>
+          <div style={styles.popupTitle}>「{entry.title}」</div>
         </div>
-        <div style={styles.title}>「{nakama.title}」</div>
-        <div style={styles.statRow}>
-          <span style={{ ...styles.levelBadge, backgroundColor: lvColor }}>
-            Lv.{nakama.level}
+      </div>
+
+      {/* ステータス（コンパクトな2列グリッド） */}
+      <div style={styles.popupStats}>
+        <div style={styles.popupStatBox}>
+          <span style={styles.popupStatLabel}>レベル</span>
+          <span style={{ ...styles.popupStatBadge, backgroundColor: lvColor }}>
+            Lv.{entry.level}
           </span>
-          <span style={styles.xpText}>{nakama.total_xp.toLocaleString()} XP</span>
-          <span style={styles.lastText}>{lastLabel}</span>
+        </div>
+        <div style={styles.popupStatBox}>
+          <span style={styles.popupStatLabel}>経験値</span>
+          <span style={styles.popupStatValue}>
+            {entry.total_xp.toLocaleString()}
+            <span style={styles.popupStatUnit}> XP</span>
+          </span>
+        </div>
+        <div style={styles.popupStatBox}>
+          <span style={styles.popupStatLabel}>稽古日数</span>
+          <span style={styles.popupStatValue}>
+            {entry.total_practice_days}
+            <span style={styles.popupStatUnit}> 日</span>
+          </span>
+        </div>
+        <div style={styles.popupStatBox}>
+          <span style={styles.popupStatLabel}>最後の稽古</span>
+          <span style={styles.popupStatValueSmall}>{lastLabel}</span>
         </div>
       </div>
 
-      {/* 応援ボタン */}
-      <div style={styles.cheerCol}>
+      {/* 応援ボタン（自分以外のときのみ） */}
+      {!isSelf ? (
         <button
           type="button"
           onClick={onCheer}
           disabled={disabled || alreadyCheered}
-          aria-label={alreadyCheered ? '応援ずみ' : `${nakama.name}を応援する`}
           style={{
-            ...styles.cheerBtn,
-            ...(alreadyCheered ? styles.cheerBtnDone : {}),
+            ...styles.popupCheerBtn,
+            ...(alreadyCheered ? styles.popupCheerBtnDone : {}),
             ...(cheering ? styles.cheerBtnLoading : {}),
-          }}
-          onTouchStart={(e) => {
-            if (!alreadyCheered && !disabled)
-              e.currentTarget.style.transform = 'scale(0.9)';
-          }}
-          onTouchEnd={(e) => {
-            e.currentTarget.style.transform = 'scale(1)';
-          }}
-          onMouseDown={(e) => {
-            if (!alreadyCheered && !disabled)
-              e.currentTarget.style.transform = 'scale(0.92)';
-          }}
-          onMouseUp={(e) => {
-            e.currentTarget.style.transform = 'scale(1)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.transform = 'scale(1)';
           }}
         >
           {cheering ? (
             <span style={styles.cheerSpinner} aria-hidden="true" />
           ) : alreadyCheered ? (
             <>
-              <span style={styles.cheerBtnEmoji}>✅</span>
-              <span style={styles.cheerBtnLabel}>応援ずみ</span>
+              <span style={{ fontSize: '16px' }}>✅</span>
+              <span>応援ずみ！</span>
             </>
           ) : (
             <>
-              <span style={styles.cheerBtnEmoji}>🎌</span>
-              <span style={styles.cheerBtnLabel}>応援</span>
+              <span style={{ fontSize: '16px' }}>🎌</span>
+              <span>応援する（+5 XP）</span>
             </>
           )}
         </button>
-      </div>
-    </div>
-  );
-}
-
-// =====================================================================
-// ★ なかま詳細モーダル（グラフのドットタップ時）
-// -------------------------------------------------------------------
-// 氏名 / 称号 / レベル / 獲得経験値 / 累計稽古日数 / 最終稽古日 を表示し、
-// 応援ボタンを含む。自分自身の場合は応援ボタンを出さない。
-// =====================================================================
-function NakamaDetailModal({
-  nakama,
-  cheering,
-  disabled,
-  onCheer,
-  onClose,
-}: {
-  nakama:   NakamaEntry;
-  cheering: boolean;
-  disabled: boolean;
-  onCheer:  () => void;
-  onClose:  () => void;
-}) {
-  const lvColor = levelColor(nakama.level);
-  const alreadyCheered = nakama.cheeredTodayByMe;
-
-  // 自分自身かどうか（自分には応援ボタンを出さない）。
-  const me = typeof window !== 'undefined' ? getAuthUser() : null;
-  const isSelf = me?.id === nakama.user_id;
-
-  const lastLabel = formatLastPractice(
-    nakama.last_practice_date,
-    nakama.daysSinceLastPractice,
-  );
-
-  return (
-    <div
-      style={styles.overlay}
-      role="dialog"
-      aria-modal="true"
-      onClick={onClose}
-    >
-      <div
-        style={styles.modal}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* 閉じるボタン */}
-        <button
-          type="button"
-          style={styles.modalClose}
-          onClick={onClose}
-          aria-label="閉じる"
-        >
-          ✕
-        </button>
-
-        {/* ヘッダー（炎 or 自分アピール） */}
-        <div style={styles.modalHead}>
-          <div style={styles.modalFlame}>
-            {isSelf ? '⭐' : nakama.isBurning ? '🔥' : '💤'}
-          </div>
-          <div style={styles.modalNameRow}>
-            <span style={styles.modalName}>{nakama.name}</span>
-            {nakama.grade && (
-              <span style={styles.gradeBadge}>{nakama.grade}年</span>
-            )}
-            {isSelf && <span style={styles.selfBadge}>キミ</span>}
-          </div>
-          <div style={styles.modalTitle}>「{nakama.title}」</div>
-        </div>
-
-        {/* ステータス表 */}
-        <div style={styles.modalStats}>
-          <div style={styles.statBox}>
-            <div style={styles.statLabel}>レベル</div>
-            <div style={{ ...styles.statValueBadge, backgroundColor: lvColor }}>
-              Lv.{nakama.level}
-            </div>
-          </div>
-          <div style={styles.statBox}>
-            <div style={styles.statLabel}>獲得経験値</div>
-            <div style={styles.statValue}>
-              {nakama.total_xp.toLocaleString()} <span style={styles.statUnit}>XP</span>
-            </div>
-          </div>
-          <div style={styles.statBox}>
-            <div style={styles.statLabel}>累計稽古日数</div>
-            <div style={styles.statValue}>
-              {nakama.total_practice_days} <span style={styles.statUnit}>日</span>
-            </div>
-          </div>
-          <div style={styles.statBox}>
-            <div style={styles.statLabel}>最後の稽古</div>
-            <div style={styles.statValueSmall}>{lastLabel}</div>
-          </div>
-        </div>
-
-        {/* 応援ボタン（自分以外のときのみ） */}
-        {!isSelf && (
-          <button
-            type="button"
-            onClick={onCheer}
-            disabled={disabled || alreadyCheered}
-            style={{
-              ...styles.modalCheerBtn,
-              ...(alreadyCheered ? styles.modalCheerBtnDone : {}),
-              ...(cheering ? styles.cheerBtnLoading : {}),
-            }}
-          >
-            {cheering ? (
-              <span style={styles.cheerSpinner} aria-hidden="true" />
-            ) : alreadyCheered ? (
-              <>
-                <span style={{ fontSize: '20px' }}>✅</span>
-                <span>今日は応援ずみ！</span>
-              </>
-            ) : (
-              <>
-                <span style={{ fontSize: '20px' }}>🎌</span>
-                <span>{nakama.name}を応援する（+5 XP）</span>
-              </>
-            )}
-          </button>
-        )}
-
-        {/* 自分の場合の一言 */}
-        {isSelf && (
-          <div style={styles.selfMessage}>
-            🔥 これがキミの現在地だ！なかまに負けず、もっと上へ！
-          </div>
-        )}
-      </div>
+      ) : (
+        <div style={styles.popupSelfMsg}>🔥 これがキミの現在地だ！</div>
+      )}
     </div>
   );
 }
@@ -730,16 +609,9 @@ function NakamaSkeleton() {
           <div style={styles.skeletonSpinner} />
         </div>
 
-        {[1, 2, 3, 4, 5].map((i) => (
-          <div key={i} style={styles.skeletonRow}>
-            <div style={{ ...styles.skeletonBlock, width: 30, height: 30, borderRadius: '50%' }} />
-            <div style={{ flex: 1 }}>
-              <div style={{ ...styles.skeletonBlock, width: '50%', height: 16, marginBottom: 8 }} />
-              <div style={{ ...styles.skeletonBlock, width: '70%', height: 12 }} />
-            </div>
-            <div style={{ ...styles.skeletonBlock, width: 56, height: 48, borderRadius: 12 }} />
-          </div>
-        ))}
+        <div style={styles.skeletonGraph}>
+          <div style={{ ...styles.skeletonBlock, width: '100%', height: '100%', borderRadius: 14 }} />
+        </div>
       </div>
 
       <style>{`
@@ -827,41 +699,6 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius:    '999px',
   },
 
-  // ★ タブバー（リスト / グラフ）
-  tabBar: {
-    display:         'flex',
-    gap:             '8px',
-    padding:         '6px',
-    backgroundColor: THEME.bgCardDeep,
-    borderRadius:    '12px',
-    border:          `1px solid ${THEME.border}`,
-  },
-  tabBtn: {
-    flex:            1,
-    display:         'flex',
-    alignItems:      'center',
-    justifyContent:  'center',
-    gap:             '6px',
-    padding:         '10px 8px',
-    fontFamily:      'inherit',
-    fontSize:        '13px',
-    fontWeight:      900,
-    color:           THEME.textMuted,
-    backgroundColor: 'transparent',
-    border:          '2px solid transparent',
-    borderRadius:    '9px',
-    cursor:          'pointer',
-    transition:      'all 0.15s ease',
-    WebkitTapHighlightColor: 'transparent',
-  },
-  tabBtnActive: {
-    color:           '#FFFFFF',
-    background:      `linear-gradient(180deg, ${THEME.primary} 0%, ${THEME.primaryDark} 100%)`,
-    border:          `2px solid ${THEME.borderSolid}`,
-    boxShadow:       '0 3px 10px rgba(255,68,68,0.35)',
-  },
-  tabEmoji: { fontSize: '16px' },
-
   // 説明バナー
   infoBanner: {
     display:         'flex',
@@ -883,179 +720,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize:   '12px',
     color:      THEME.textMuted,
     lineHeight: 1.5,
-  },
-
-  // リスト
-  list: {
-    display:       'flex',
-    flexDirection: 'column',
-    gap:           '10px',
-  },
-
-  // 1行（カード）
-  row: {
-    display:         'flex',
-    alignItems:      'center',
-    gap:             '10px',
-    padding:         '12px 12px',
-    backgroundColor: THEME.bgCard,
-    border:          `2px solid ${THEME.border}`,
-    borderRadius:    '14px',
-    boxShadow:       '0 3px 12px rgba(0,0,0,0.3)',
-    transition:      'transform 0.15s ease',
-  },
-  // ★ 燃え盛り（3日以内稽古）の行
-  rowBurning: {
-    border:     `2px solid ${THEME.primary}`,
-    background: `linear-gradient(135deg, ${THEME.bgCard} 0%, #6E1212 100%)`,
-    animation:  'nakama_flame_glow 2.2s ease-in-out infinite',
-  },
-
-  // 順位
-  rankCol: {
-    width:          '28px',
-    flexShrink:     0,
-    display:        'flex',
-    alignItems:     'center',
-    justifyContent: 'center',
-  },
-  medal:   { fontSize: '22px' },
-  rankNum: {
-    fontSize:   '15px',
-    fontWeight: 900,
-    color:      THEME.textSubtle,
-  },
-
-  // 炎カラム
-  flameCol: {
-    width:          '30px',
-    flexShrink:     0,
-    display:        'flex',
-    alignItems:     'center',
-    justifyContent: 'center',
-  },
-  burningFlame: {
-    fontSize:  '26px',
-    animation: 'nakama_flame_flicker 0.9s ease-in-out infinite',
-    filter:    'drop-shadow(0 0 6px rgba(255,120,0,0.7))',
-  },
-  coldMark: {
-    fontSize: '20px',
-    opacity:  0.5,
-  },
-
-  // 情報カラム
-  infoCol: {
-    flex:          1,
-    minWidth:      0,
-    display:       'flex',
-    flexDirection: 'column',
-    gap:           '3px',
-  },
-  nameRow: {
-    display:    'flex',
-    alignItems: 'center',
-    gap:        '6px',
-  },
-  name: {
-    fontSize:     '16px',
-    fontWeight:   900,
-    color:        THEME.text,
-    whiteSpace:   'nowrap',
-    overflow:     'hidden',
-    textOverflow: 'ellipsis',
-  },
-  gradeBadge: {
-    fontSize:        '10px',
-    fontWeight:      700,
-    color:           THEME.textMuted,
-    padding:         '1px 6px',
-    backgroundColor: THEME.bgCardDeep,
-    borderRadius:    '999px',
-    flexShrink:      0,
-  },
-  title: {
-    fontSize:     '12px',
-    fontWeight:   700,
-    color:        THEME.accent,
-    whiteSpace:   'nowrap',
-    overflow:     'hidden',
-    textOverflow: 'ellipsis',
-  },
-  statRow: {
-    display:    'flex',
-    alignItems: 'center',
-    gap:        '8px',
-    flexWrap:   'wrap',
-  },
-  levelBadge: {
-    fontSize:     '11px',
-    fontWeight:   900,
-    color:        '#1A0000',
-    padding:      '2px 8px',
-    borderRadius: '6px',
-    textShadow:   '0 1px 0 rgba(255,255,255,0.25)',
-  },
-  xpText: {
-    fontSize:   '12px',
-    fontWeight: 700,
-    color:      THEME.textMuted,
-  },
-  lastText: {
-    fontSize: '11px',
-    color:    THEME.textSubtle,
-  },
-
-  // 応援ボタンカラム
-  cheerCol: {
-    flexShrink: 0,
-  },
-  cheerBtn: {
-    minWidth:        '60px',
-    minHeight:       '52px',
-    padding:         '6px 8px',
-    display:         'flex',
-    flexDirection:   'column',
-    alignItems:      'center',
-    justifyContent:  'center',
-    gap:             '2px',
-    fontFamily:      'inherit',
-    color:           '#FFFFFF',
-    background:      `linear-gradient(180deg, #FF5555 0%, ${THEME.primary} 50%, ${THEME.primaryDark} 100%)`,
-    border:          `2px solid ${THEME.borderSolid}`,
-    borderRadius:    '12px',
-    cursor:          'pointer',
-    transition:      'transform 0.1s ease',
-    boxShadow:       '0 3px 10px rgba(255,68,68,0.4)',
-    WebkitTapHighlightColor: 'transparent',
-  },
-  cheerBtnDone: {
-    background: THEME.bgCardDeep,
-    border:     `2px solid ${THEME.border}`,
-    boxShadow:  'none',
-    cursor:     'default',
-    color:      THEME.textSubtle,
-  },
-  cheerBtnLoading: {
-    opacity: 0.8,
-    cursor:  'wait',
-  },
-  cheerBtnEmoji: {
-    fontSize:   '20px',
-    lineHeight: 1,
-  },
-  cheerBtnLabel: {
-    fontSize:   '11px',
-    fontWeight: 900,
-    lineHeight: 1,
-  },
-  cheerSpinner: {
-    width:          '20px',
-    height:         '20px',
-    border:         '3px solid rgba(255,255,255,0.3)',
-    borderTopColor: '#FFFFFF',
-    borderRadius:   '50%',
-    animation:      'nakama_spin 0.7s linear infinite',
   },
 
   // ★ グラフカード
@@ -1090,8 +754,9 @@ const styles: Record<string, React.CSSProperties> = {
     display:      'inline-block',
   },
   chartWrap: {
-    width:  '100%',
-    height: '360px',
+    position: 'relative',
+    width:    '100%',
+    height:   '360px',
   },
   graphHint: {
     textAlign:  'center',
@@ -1102,54 +767,34 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1.5,
   },
 
-  // 空状態
-  emptyBox: {
-    textAlign:       'center',
-    padding:         '40px 20px',
-    backgroundColor: THEME.bgCard,
-    border:          `2px dashed ${THEME.border}`,
-    borderRadius:    '14px',
+  // ★ インラインポップアップ
+  popupCatcher: {
+    position: 'absolute',
+    inset:    0,
+    zIndex:   10,
+    // 透明だがクリックは拾う（外側タップで閉じる用）。
+    background: 'transparent',
   },
-  emptyText: {
-    fontSize:   '14px',
-    fontWeight: 700,
-    color:      THEME.textMuted,
-  },
-
-  // ★ 詳細モーダル
-  overlay: {
-    position:        'fixed',
-    inset:           0,
-    zIndex:          300,
-    display:         'flex',
-    alignItems:      'center',
-    justifyContent:  'center',
-    padding:         '20px',
-    backgroundColor: 'rgba(0,0,0,0.65)',
-    backdropFilter:  'blur(2px)',
-    animation:       'nakama_overlay_in 0.2s ease both',
-  },
-  modal: {
-    position:        'relative',
-    width:           '100%',
-    maxWidth:        '360px',
-    padding:         '22px 20px 20px',
+  popup: {
+    position:        'absolute',
+    zIndex:          20,
+    padding:         '12px 12px 12px',
     backgroundColor: THEME.bgCard,
     border:          `2px solid ${THEME.borderSolid}`,
-    borderRadius:    '18px',
-    boxShadow:       '0 12px 40px rgba(0,0,0,0.6)',
-    animation:       'nakama_modal_in 0.28s cubic-bezier(0.2,0.8,0.3,1.2) both',
+    borderRadius:    '14px',
+    boxShadow:       '0 10px 30px rgba(0,0,0,0.6)',
+    animation:       'nakama_popup_in 0.18s cubic-bezier(0.2,0.8,0.3,1.2) both',
   },
-  modalClose: {
+  popupClose: {
     position:        'absolute',
-    top:             '10px',
-    right:           '10px',
-    width:           '32px',
-    height:          '32px',
+    top:             '6px',
+    right:           '6px',
+    width:           '24px',
+    height:          '24px',
     display:         'flex',
     alignItems:      'center',
     justifyContent:  'center',
-    fontSize:        '16px',
+    fontSize:        '12px',
     fontWeight:      900,
     color:           THEME.textMuted,
     backgroundColor: THEME.bgCardDeep,
@@ -1158,123 +803,155 @@ const styles: Record<string, React.CSSProperties> = {
     cursor:          'pointer',
     WebkitTapHighlightColor: 'transparent',
   },
-  modalHead: {
-    display:        'flex',
-    flexDirection:  'column',
-    alignItems:     'center',
-    gap:            '4px',
-    marginBottom:   '16px',
+  popupHead: {
+    display:      'flex',
+    alignItems:   'center',
+    gap:          '8px',
+    paddingRight: '22px', // 閉じるボタンと被らないよう余白
+    marginBottom: '10px',
   },
-  modalFlame: {
-    fontSize:  '40px',
-    animation: 'nakama_flame_flicker 1.1s ease-in-out infinite',
+  popupFlame: {
+    fontSize:   '26px',
+    flexShrink: 0,
+    animation:  'nakama_flame_flicker 1.1s ease-in-out infinite',
   },
-  modalNameRow: {
+  popupNameCol: {
+    display:       'flex',
+    flexDirection: 'column',
+    gap:           '2px',
+    minWidth:      0,
+  },
+  popupNameRow: {
     display:    'flex',
     alignItems: 'center',
-    gap:        '6px',
+    gap:        '5px',
     flexWrap:   'wrap',
-    justifyContent: 'center',
   },
-  modalName: {
-    fontSize:   '20px',
+  popupName: {
+    fontSize:   '16px',
     fontWeight: 900,
     color:      THEME.text,
   },
-  selfBadge: {
+  popupTitle: {
+    fontSize:     '11px',
+    fontWeight:   700,
+    color:        THEME.accent,
+    whiteSpace:   'nowrap',
+    overflow:     'hidden',
+    textOverflow: 'ellipsis',
+  },
+  gradeBadge: {
     fontSize:        '10px',
-    fontWeight:      900,
-    color:           '#1A0000',
-    padding:         '2px 8px',
-    background:      'linear-gradient(180deg, #FFF7C0 0%, #FFD700 100%)',
+    fontWeight:      700,
+    color:           THEME.textMuted,
+    padding:         '1px 6px',
+    backgroundColor: THEME.bgCardDeep,
     borderRadius:    '999px',
-    boxShadow:       '0 0 6px rgba(255,215,0,0.7)',
+    flexShrink:      0,
   },
-  modalTitle: {
-    fontSize:   '13px',
-    fontWeight: 700,
-    color:      THEME.accent,
+  selfBadge: {
+    fontSize:     '9px',
+    fontWeight:   900,
+    color:        '#1A0000',
+    padding:      '1px 7px',
+    background:   'linear-gradient(180deg, #FFF7C0 0%, #FFD700 100%)',
+    borderRadius: '999px',
+    boxShadow:    '0 0 6px rgba(255,215,0,0.7)',
+    flexShrink:   0,
   },
-  modalStats: {
+  popupStats: {
     display:             'grid',
     gridTemplateColumns: '1fr 1fr',
-    gap:                 '8px',
-    marginBottom:        '18px',
+    gap:                 '6px',
+    marginBottom:        '10px',
   },
-  statBox: {
+  popupStatBox: {
     display:         'flex',
     flexDirection:   'column',
     alignItems:      'center',
-    gap:             '4px',
-    padding:         '10px 6px',
+    gap:             '3px',
+    padding:         '7px 4px',
     backgroundColor: THEME.bgCardDeep,
     border:          `1px solid ${THEME.border}`,
-    borderRadius:    '10px',
+    borderRadius:    '8px',
   },
-  statLabel: {
-    fontSize:   '10px',
+  popupStatLabel: {
+    fontSize:   '9px',
     fontWeight: 700,
     color:      THEME.textSubtle,
   },
-  statValue: {
-    fontSize:   '18px',
+  popupStatValue: {
+    fontSize:   '14px',
     fontWeight: 900,
     color:      THEME.text,
   },
-  statValueSmall: {
-    fontSize:   '13px',
+  popupStatValueSmall: {
+    fontSize:   '11px',
     fontWeight: 900,
     color:      THEME.text,
     textAlign:  'center',
   },
-  statValueBadge: {
-    fontSize:     '15px',
+  popupStatBadge: {
+    fontSize:     '12px',
     fontWeight:   900,
     color:        '#1A0000',
-    padding:      '3px 12px',
-    borderRadius: '8px',
+    padding:      '2px 10px',
+    borderRadius: '6px',
     textShadow:   '0 1px 0 rgba(255,255,255,0.25)',
   },
-  statUnit: {
-    fontSize:   '11px',
+  popupStatUnit: {
+    fontSize:   '10px',
     fontWeight: 700,
     color:      THEME.textMuted,
   },
-  modalCheerBtn: {
+  popupCheerBtn: {
     width:           '100%',
-    minHeight:       '52px',
+    minHeight:       '42px',
     display:         'flex',
     alignItems:      'center',
     justifyContent:  'center',
-    gap:             '8px',
+    gap:             '6px',
     fontFamily:      'inherit',
-    fontSize:        '15px',
+    fontSize:        '13px',
     fontWeight:      900,
     color:           '#FFFFFF',
     background:      `linear-gradient(180deg, #FF5555 0%, ${THEME.primary} 50%, ${THEME.primaryDark} 100%)`,
     border:          `2px solid ${THEME.borderSolid}`,
-    borderRadius:    '12px',
+    borderRadius:    '10px',
     cursor:          'pointer',
     boxShadow:       '0 3px 10px rgba(255,68,68,0.4)',
     WebkitTapHighlightColor: 'transparent',
   },
-  modalCheerBtnDone: {
+  popupCheerBtnDone: {
     background: THEME.bgCardDeep,
     border:     `2px solid ${THEME.border}`,
     boxShadow:  'none',
     cursor:     'default',
     color:      THEME.textSubtle,
   },
-  selfMessage: {
+  popupSelfMsg: {
     textAlign:       'center',
-    fontSize:        '13px',
+    fontSize:        '12px',
     fontWeight:      700,
-    color:           THEME.accent,
-    padding:         '12px',
+    color:           SELF_COLOR,
+    padding:         '9px',
     backgroundColor: THEME.bgCardDeep,
-    border:          `1px solid ${THEME.accent}`,
+    border:          `1px solid ${SELF_COLOR}`,
     borderRadius:    '10px',
-    lineHeight:      1.5,
+  },
+
+  // 共通スピナー（応援中）
+  cheerBtnLoading: {
+    opacity: 0.8,
+    cursor:  'wait',
+  },
+  cheerSpinner: {
+    width:          '18px',
+    height:         '18px',
+    border:         '3px solid rgba(255,255,255,0.3)',
+    borderTopColor: '#FFFFFF',
+    borderRadius:   '50%',
+    animation:      'nakama_spin 0.7s linear infinite',
   },
 
   // トースト
@@ -1357,15 +1034,10 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius:   '50%',
     animation:      'nakama_skel_spin 0.9s linear infinite',
   },
-  skeletonRow: {
-    display:         'flex',
-    alignItems:      'center',
-    gap:             '10px',
-    padding:         '12px',
-    backgroundColor: THEME.bgCard,
-    border:          `2px solid ${THEME.border}`,
-    borderRadius:    '14px',
-    marginBottom:    '10px',
+  skeletonGraph: {
+    width:   '100%',
+    height:  '360px',
+    padding: '0 4px',
   },
   skeletonBlock: {
     backgroundColor: 'rgba(255,255,255,0.12)',
