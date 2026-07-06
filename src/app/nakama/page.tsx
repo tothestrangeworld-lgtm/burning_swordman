@@ -4,12 +4,11 @@
 // 他の門下生の頑張りを散布図で可視化し、切磋琢磨のモチベーションを高め合う
 // Phase 8:   新規実装
 // Phase 8.1: 散布図（2軸グラフ）ビュー追加
-// Phase 8.2: UI/UXリファクタリング
-//            ・リスト表示／タブUIを廃止し、常に散布図のみを表示
-//            ・巨大モーダルを廃止し、プロット横のインラインポップアップへ変更
-//              （外側タップでスッと閉じる・画面端は座標を自動フリップ）
-//            ・なかまのプロット色を青系（水色 #4DB8FF）へ変更し、
-//              金色（自分）とのコントラストを明確化
+// Phase 8.2: UI/UXリファクタリング（リスト廃止・インラインポップアップ・青/金配色）
+// Phase 8.3: ズーム＆頭文字ラベル対応
+//            ・＋/−/リセットでチャートを拡大縮小（スクロール＆ドラッグで移動）
+//              → 密集地帯のポイントも指で確実にタップできる
+//            ・各プロットに名前の先頭1文字を描画（誰のポイントか一目でわかる）
 // =====================================================================
 
 'use client';
@@ -24,7 +23,6 @@ import {
   YAxis,
   ZAxis,
   CartesianGrid,
-  Cell,
 } from 'recharts';
 import {
   useNakamaListSWR,
@@ -44,19 +42,29 @@ const NAKAMA_STROKE = '#1E88E5';     // なかまの縁取り（濃い青）
 const SELF_COLOR = '#FFD700';        // 自分（ゴールド）
 const SELF_STROKE = '#FFF7C0';       // 自分の縁取り（淡い金）
 
+// =====================================================================
+// ズーム設定（Phase 8.3）
+// -------------------------------------------------------------------
+// チャート自体を zoom 倍に拡大し、ラッパーの overflow スクロールで移動する。
+// =====================================================================
+const ZOOM_MIN = 1;      // 等倍（全体表示）
+const ZOOM_MAX = 4;      // 最大4倍
+const ZOOM_STEP = 0.5;   // ＋/− の刻み
+
 // 散布図のプロット1点（Recharts の data 用に整形）
 interface ScatterPoint {
   x:      number;       // 累計稽古日数
   y:      number;       // レベル
   z:      number;       // ドットサイズ（自分を大きく）
   isSelf: boolean;      // 自分かどうか（色・サイズ切替）
+  initial: string;      // ★ 名前の先頭1文字（プロット内に描画）
   entry:  NakamaEntry;  // 元データ（ポップアップ表示用）
 }
 
 // ★ インラインポップアップの状態（選択中データ＋クリック座標）
 interface PopupState {
   entry: NakamaEntry;
-  // グラフコンテナ左上を基準としたプロットの座標（px）
+  // グラフスクロール領域左上を基準としたプロットの座標（px）
   cx:    number;
   cy:    number;
 }
@@ -64,6 +72,66 @@ interface PopupState {
 // ポップアップのおおよそのサイズ（フリップ判定に使用）
 const POPUP_W = 240;
 const POPUP_H = 220;
+
+// =====================================================================
+// 名前の先頭1文字を安全に取り出す（サロゲートペア／絵文字対応）
+// =====================================================================
+function firstChar(name: string): string {
+  if (!name) return '?';
+  // Array.from で1コードポイント単位に分割し、先頭を取得する。
+  return Array.from(name.trim())[0] ?? '?';
+}
+
+// =====================================================================
+// ★ カスタムプロット図形（円＋名前の頭文字）
+// -------------------------------------------------------------------
+// Recharts の Scatter shape へ渡す。cx/cy/payload が供給される。
+// 自分は大きめ・ゴールド・グロー、なかまは水色で描画する。
+// =====================================================================
+function NakamaDot(props: any) {
+  const { cx, cy, payload } = props;
+  if (typeof cx !== 'number' || typeof cy !== 'number' || !payload) {
+    return null;
+  }
+  const p = payload as ScatterPoint;
+  const r = p.isSelf ? 16 : 13;                 // 半径
+  const fill = p.isSelf ? SELF_COLOR : NAKAMA_COLOR;
+  const stroke = p.isSelf ? SELF_STROKE : NAKAMA_STROKE;
+  const strokeWidth = p.isSelf ? 3 : 1.5;
+  // 頭文字の色: 明るい塗り（金・水色）に対して濃色で可読性を確保。
+  const textColor = p.isSelf ? '#5A3B00' : '#0A2A45';
+
+  return (
+    <g style={{ cursor: 'pointer' }}>
+      <circle
+        cx={cx}
+        cy={cy}
+        r={r}
+        fill={fill}
+        stroke={stroke}
+        strokeWidth={strokeWidth}
+        style={{
+          filter: p.isSelf
+            ? 'drop-shadow(0 0 8px rgba(255,215,0,0.9))'
+            : 'none',
+        }}
+      />
+      <text
+        x={cx}
+        y={cy}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize={p.isSelf ? 15 : 12}
+        fontWeight={900}
+        fill={textColor}
+        // テキストがクリックを奪ってドット選択を邪魔しないように。
+        style={{ pointerEvents: 'none', userSelect: 'none' }}
+      >
+        {p.initial}
+      </text>
+    </g>
+  );
+}
 
 export default function NakamaPage() {
   const router = useRouter();
@@ -96,9 +164,12 @@ export default function NakamaPage() {
   const [toast, setToast] = useState<{ text: string; ok: boolean } | null>(null);
   // ★ インラインポップアップの状態（null で非表示）
   const [popup, setPopup] = useState<PopupState | null>(null);
+  // ★ Phase 8.3: ズーム倍率
+  const [zoom, setZoom] = useState<number>(ZOOM_MIN);
 
-  // グラフ描画エリアの実寸を測るための ref（ポップアップ座標のフリップ計算用）
-  const chartWrapRef = useRef<HTMLDivElement | null>(null);
+  // 外枠（スクロールビューポート）とチャート実体の ref
+  const scrollRef = useRef<HTMLDivElement | null>(null);   // overflow: auto の枠
+  const chartInnerRef = useRef<HTMLDivElement | null>(null); // 拡大されるチャート実体
 
   // ---------------------------------------------------------------
   // 応援ハンドラ
@@ -132,6 +203,29 @@ export default function NakamaPage() {
   };
 
   // ---------------------------------------------------------------
+  // ズーム操作
+  // ---------------------------------------------------------------
+  const clampZoom = (z: number) =>
+    Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(z * 10) / 10));
+
+  const zoomIn = () => {
+    setPopup(null); // ズームでポップアップは閉じる（座標がずれるため）
+    setZoom((z) => clampZoom(z + ZOOM_STEP));
+  };
+  const zoomOut = () => {
+    setPopup(null);
+    setZoom((z) => clampZoom(z - ZOOM_STEP));
+  };
+  const zoomReset = () => {
+    setPopup(null);
+    setZoom(ZOOM_MIN);
+    // スクロール位置も左上へ戻す。
+    if (scrollRef.current) {
+      scrollRef.current.scrollTo({ left: 0, top: 0, behavior: 'smooth' });
+    }
+  };
+
+  // ---------------------------------------------------------------
   // 散布図用データの整形（自分＋なかま）
   // ---------------------------------------------------------------
   const scatterData: ScatterPoint[] = useMemo(() => {
@@ -145,6 +239,7 @@ export default function NakamaPage() {
         y:      n.level,
         z:      100,
         isSelf: false,
+        initial: firstChar(n.name),
         entry:  n,
       });
     }
@@ -156,6 +251,7 @@ export default function NakamaPage() {
         y:      data.my_data.level,
         z:      360, // 大きめのドット
         isSelf: true,
+        initial: firstChar(data.my_data.name),
         entry:  data.my_data,
       });
     }
@@ -179,30 +275,29 @@ export default function NakamaPage() {
   // ---------------------------------------------------------------
   // ★ ポップアップの表示位置を計算（画面端で見切れないよう自動フリップ）
   // -------------------------------------------------------------------
-  // プロットの右側に出すのが基本。右にはみ出すなら左へ。
-  // 縦は中央寄せを基本に、上下にはみ出す分だけクランプする。
+  // 座標はスクロール領域（拡大チャート）内の絶対座標。ポップアップも同じ
+  // 拡大レイヤ上に置くため、スクロールしても追従する。
   // ---------------------------------------------------------------
   const popupPos = useMemo(() => {
     if (!popup) return null;
-    const wrap = chartWrapRef.current;
-    const wrapW = wrap?.clientWidth ?? 320;
-    const wrapH = wrap?.clientHeight ?? 360;
+    const inner = chartInnerRef.current;
+    const areaW = inner?.clientWidth ?? 320;
+    const areaH = inner?.clientHeight ?? 360;
 
     const gap = 14; // プロットとの間隔
 
     // --- 横位置: 基本は右側。右に収まらなければ左側へフリップ。 ---
     let left = popup.cx + gap;
-    if (left + POPUP_W > wrapW) {
+    if (left + POPUP_W > areaW) {
       left = popup.cx - gap - POPUP_W;
     }
-    // それでも左に収まらない（＝コンテナが狭い）場合は端でクランプ。
     if (left < 4) left = 4;
-    if (left + POPUP_W > wrapW - 4) left = Math.max(4, wrapW - 4 - POPUP_W);
+    if (left + POPUP_W > areaW - 4) left = Math.max(4, areaW - 4 - POPUP_W);
 
     // --- 縦位置: プロット中心に対して縦センター。上下端をクランプ。 ---
     let top = popup.cy - POPUP_H / 2;
     if (top < 4) top = 4;
-    if (top + POPUP_H > wrapH - 4) top = Math.max(4, wrapH - 4 - POPUP_H);
+    if (top + POPUP_H > areaH - 4) top = Math.max(4, areaH - 4 - POPUP_H);
 
     return { left, top };
   }, [popup]);
@@ -233,6 +328,7 @@ export default function NakamaPage() {
   }
 
   const { cheeredToday } = data;
+  const zoomPct = Math.round(zoom * 100);
 
   // ---------------------------------------------------------------
   // メインビュー（常に散布図のみ）
@@ -260,137 +356,181 @@ export default function NakamaPage() {
           <div>
             <div style={styles.infoTitle}>なかまと切磋琢磨しよう！</div>
             <div style={styles.infoSub}>
-              ドットをタップすると くわしく見れるよ！
+              ＋/−で拡大して、ドットをタップ！
               <strong style={{ color: SELF_COLOR }}> 金色</strong>のドットが「キミ」だ🔥
             </div>
           </div>
         </div>
 
         {/* ============================================================
-            グラフ表示（散布図）
+            グラフ表示（散布図＋ズーム）
         ============================================================ */}
         <div style={styles.graphCard}>
-          {/* 凡例 */}
-          <div style={styles.graphLegend}>
-            <span style={styles.legendItem}>
-              <span
+          {/* 凡例＋ズームコントロール */}
+          <div style={styles.graphTopBar}>
+            <div style={styles.graphLegend}>
+              <span style={styles.legendItem}>
+                <span
+                  style={{
+                    ...styles.legendDot,
+                    backgroundColor: NAKAMA_COLOR,
+                    border:          `2px solid ${NAKAMA_STROKE}`,
+                  }}
+                />
+                なかま
+              </span>
+              <span style={styles.legendItem}>
+                <span
+                  style={{
+                    ...styles.legendDot,
+                    background: 'radial-gradient(circle, #FFF7C0 0%, #FFD700 55%, #FFA000 100%)',
+                    boxShadow: '0 0 8px rgba(255,215,0,0.9)',
+                  }}
+                />
+                キミ
+              </span>
+            </div>
+
+            {/* ★ ズームコントロール */}
+            <div style={styles.zoomBar} role="group" aria-label="ズーム操作">
+              <button
+                type="button"
+                onClick={zoomOut}
+                disabled={zoom <= ZOOM_MIN}
+                aria-label="ズームアウト"
                 style={{
-                  ...styles.legendDot,
-                  backgroundColor: NAKAMA_COLOR,
-                  border:          `2px solid ${NAKAMA_STROKE}`,
+                  ...styles.zoomBtn,
+                  ...(zoom <= ZOOM_MIN ? styles.zoomBtnDisabled : {}),
                 }}
-              />
-              なかま
-            </span>
-            <span style={styles.legendItem}>
-              <span
+              >
+                −
+              </button>
+              <button
+                type="button"
+                onClick={zoomReset}
+                aria-label="ズームをリセット"
+                style={styles.zoomResetBtn}
+              >
+                {zoomPct}%
+              </button>
+              <button
+                type="button"
+                onClick={zoomIn}
+                disabled={zoom >= ZOOM_MAX}
+                aria-label="ズームイン"
                 style={{
-                  ...styles.legendDot,
-                  background: 'radial-gradient(circle, #FFF7C0 0%, #FFD700 55%, #FFA000 100%)',
-                  boxShadow: '0 0 8px rgba(255,215,0,0.9)',
+                  ...styles.zoomBtn,
+                  ...(zoom >= ZOOM_MAX ? styles.zoomBtnDisabled : {}),
                 }}
-              />
-              キミ
-            </span>
+              >
+                ＋
+              </button>
+            </div>
           </div>
 
-          {/* 散布図本体（ポップアップを重ねるため position: relative） */}
-          <div ref={chartWrapRef} style={styles.chartWrap}>
-            <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart
-                margin={{ top: 16, right: 20, bottom: 40, left: 8 }}
-              >
-                <CartesianGrid
-                  stroke="rgba(255,255,255,0.10)"
-                  strokeDasharray="3 3"
-                />
-                <XAxis
-                  type="number"
-                  dataKey="x"
-                  name="累計稽古日数"
-                  domain={[0, axisRange.xMax]}
-                  tick={{ fill: THEME.textMuted, fontSize: 11 }}
-                  stroke="rgba(255,255,255,0.25)"
-                  label={{
-                    value:    '累計稽古日数（日）',
-                    position: 'bottom',
-                    offset:   16,
-                    fill:     THEME.textSubtle,
-                    fontSize: 12,
-                  }}
-                />
-                <YAxis
-                  type="number"
-                  dataKey="y"
-                  name="レベル"
-                  domain={[0, axisRange.yMax]}
-                  tick={{ fill: THEME.textMuted, fontSize: 11 }}
-                  stroke="rgba(255,255,255,0.25)"
-                  label={{
-                    value:    'レベル',
-                    angle:    -90,
-                    position: 'insideLeft',
-                    offset:   16,
-                    fill:     THEME.textSubtle,
-                    fontSize: 12,
-                  }}
-                />
-                <ZAxis type="number" dataKey="z" range={[80, 400]} />
-                <Scatter
-                  data={scatterData}
-                  isAnimationActive={false}
-                  onClick={(pt: any) => {
-                    // Recharts はクリックした点の payload と描画座標(cx/cy)を渡す。
-                    const entry = pt?.payload?.entry as NakamaEntry | undefined;
-                    if (!entry) return;
-                    // cx/cy はグラフ描画領域内の座標（px）。ポップアップ配置に使う。
-                    const cx = typeof pt?.cx === 'number' ? pt.cx : 0;
-                    const cy = typeof pt?.cy === 'number' ? pt.cy : 0;
-                    setPopup({ entry, cx, cy });
-                  }}
+          {/* スクロールビューポート（拡大時はドラッグ／スワイプで移動可能） */}
+          <div
+            ref={scrollRef}
+            style={{
+              ...styles.chartScroll,
+              // 拡大中のみスクロール可能に（等倍では固定表示）。
+              overflow: zoom > ZOOM_MIN ? 'auto' : 'hidden',
+              cursor:   zoom > ZOOM_MIN ? 'grab' : 'default',
+            }}
+          >
+            {/* 拡大されるチャート実体（幅・高さを zoom 倍にする） */}
+            <div
+              ref={chartInnerRef}
+              style={{
+                position: 'relative',
+                width:    `${100 * zoom}%`,
+                height:   `${360 * zoom}px`,
+              }}
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <ScatterChart
+                  margin={{ top: 16, right: 24, bottom: 40, left: 8 }}
                 >
-                  {scatterData.map((p, i) => (
-                    <Cell
-                      key={`cell-${i}`}
-                      fill={p.isSelf ? SELF_COLOR : NAKAMA_COLOR}
-                      stroke={p.isSelf ? SELF_STROKE : NAKAMA_STROKE}
-                      strokeWidth={p.isSelf ? 3 : 1.5}
-                      style={{
-                        cursor: 'pointer',
-                        filter: p.isSelf
-                          ? 'drop-shadow(0 0 8px rgba(255,215,0,0.9))'
-                          : 'none',
-                      }}
-                    />
-                  ))}
-                </Scatter>
-              </ScatterChart>
-            </ResponsiveContainer>
+                  <CartesianGrid
+                    stroke="rgba(255,255,255,0.10)"
+                    strokeDasharray="3 3"
+                  />
+                  <XAxis
+                    type="number"
+                    dataKey="x"
+                    name="累計稽古日数"
+                    domain={[0, axisRange.xMax]}
+                    tick={{ fill: THEME.textMuted, fontSize: 11 }}
+                    stroke="rgba(255,255,255,0.25)"
+                    label={{
+                      value:    '累計稽古日数（日）',
+                      position: 'bottom',
+                      offset:   16,
+                      fill:     THEME.textSubtle,
+                      fontSize: 12,
+                    }}
+                  />
+                  <YAxis
+                    type="number"
+                    dataKey="y"
+                    name="レベル"
+                    domain={[0, axisRange.yMax]}
+                    tick={{ fill: THEME.textMuted, fontSize: 11 }}
+                    stroke="rgba(255,255,255,0.25)"
+                    label={{
+                      value:    'レベル',
+                      angle:    -90,
+                      position: 'insideLeft',
+                      offset:   16,
+                      fill:     THEME.textSubtle,
+                      fontSize: 12,
+                    }}
+                  />
+                  <ZAxis type="number" dataKey="z" range={[80, 400]} />
+                  <Scatter
+                    data={scatterData}
+                    isAnimationActive={false}
+                    // ★ 頭文字入りカスタム図形
+                    shape={<NakamaDot />}
+                    onClick={(pt: any) => {
+                      // Recharts はクリックした点の payload と描画座標(cx/cy)を渡す。
+                      const entry = pt?.payload?.entry as NakamaEntry | undefined;
+                      if (!entry) return;
+                      const cx = typeof pt?.cx === 'number' ? pt.cx : 0;
+                      const cy = typeof pt?.cy === 'number' ? pt.cy : 0;
+                      setPopup({ entry, cx, cy });
+                    }}
+                  />
+                </ScatterChart>
+              </ResponsiveContainer>
 
-            {/* ★ インラインポップアップ（プロット横にコンパクト表示） */}
-            {popup && popupPos && (
-              <>
-                {/* 透明オーバーレイ: 外側タップで閉じる */}
-                <div
-                  style={styles.popupCatcher}
-                  onClick={() => setPopup(null)}
-                  aria-hidden="true"
-                />
-                <InlinePopup
-                  entry={popup.entry}
-                  left={popupPos.left}
-                  top={popupPos.top}
-                  cheering={cheeringId === popup.entry.user_id}
-                  disabled={cheeringId !== null}
-                  onCheer={() => handleCheer(popup.entry)}
-                  onClose={() => setPopup(null)}
-                />
-              </>
-            )}
+              {/* ★ インラインポップアップ（拡大レイヤ上に配置＝スクロール追従） */}
+              {popup && popupPos && (
+                <>
+                  {/* 透明オーバーレイ: 外側タップで閉じる */}
+                  <div
+                    style={styles.popupCatcher}
+                    onClick={() => setPopup(null)}
+                    aria-hidden="true"
+                  />
+                  <InlinePopup
+                    entry={popup.entry}
+                    left={popupPos.left}
+                    top={popupPos.top}
+                    cheering={cheeringId === popup.entry.user_id}
+                    disabled={cheeringId !== null}
+                    onCheer={() => handleCheer(popup.entry)}
+                    onClose={() => setPopup(null)}
+                  />
+                </>
+              )}
+            </div>
           </div>
 
           <div style={styles.graphHint}>
-            右上にいくほど「たくさん稽古して、強い剣士」だ！キミはどこかな？🔥
+            {zoom > ZOOM_MIN
+              ? '指でスワイプして見たい場所へ移動できるよ！'
+              : '右上にいくほど「たくさん稽古して、強い剣士」だ！🔥'}
           </div>
         </div>
 
@@ -448,7 +588,7 @@ export default function NakamaPage() {
 // -------------------------------------------------------------------
 // 氏名 / 称号 / レベル / 獲得経験値 / 累計稽古日数 / 最終稽古日 を表示し、
 // 応援ボタンを含む。自分自身の場合は応援ボタンを出さない。
-// left/top はグラフコンテナ左上を基準とした絶対座標（px）。
+// left/top は拡大チャートレイヤ左上を基準とした絶対座標（px）。
 // =====================================================================
 function InlinePopup({
   entry,
@@ -733,11 +873,18 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius:    '14px',
     boxShadow:       '0 3px 12px rgba(0,0,0,0.3)',
   },
-  graphLegend: {
+  // 凡例＋ズームを1段に並べるトップバー
+  graphTopBar: {
     display:        'flex',
-    justifyContent: 'center',
-    gap:            '18px',
-    padding:        '0 4px',
+    alignItems:     'center',
+    justifyContent: 'space-between',
+    gap:            '8px',
+    flexWrap:       'wrap',
+    padding:        '0 2px',
+  },
+  graphLegend: {
+    display:    'flex',
+    gap:        '16px',
   },
   legendItem: {
     display:    'flex',
@@ -753,10 +900,61 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '50%',
     display:      'inline-block',
   },
-  chartWrap: {
-    position: 'relative',
-    width:    '100%',
-    height:   '360px',
+
+  // ★ ズームコントロール
+  zoomBar: {
+    display:         'flex',
+    alignItems:      'center',
+    gap:             '6px',
+    padding:         '4px',
+    backgroundColor: THEME.bgCardDeep,
+    border:          `1px solid ${THEME.border}`,
+    borderRadius:    '999px',
+  },
+  zoomBtn: {
+    width:           '32px',
+    height:          '32px',
+    display:         'flex',
+    alignItems:      'center',
+    justifyContent:  'center',
+    fontFamily:      'inherit',
+    fontSize:        '20px',
+    fontWeight:      900,
+    lineHeight:      1,
+    color:           '#FFFFFF',
+    background:      `linear-gradient(180deg, ${THEME.primary} 0%, ${THEME.primaryDark} 100%)`,
+    border:          `2px solid ${THEME.borderSolid}`,
+    borderRadius:    '50%',
+    cursor:          'pointer',
+    WebkitTapHighlightColor: 'transparent',
+  },
+  zoomBtnDisabled: {
+    opacity: 0.4,
+    cursor:  'not-allowed',
+    filter:  'grayscale(0.6)',
+  },
+  zoomResetBtn: {
+    minWidth:        '52px',
+    height:          '30px',
+    padding:         '0 8px',
+    fontFamily:      'inherit',
+    fontSize:        '12px',
+    fontWeight:      900,
+    color:           THEME.text,
+    backgroundColor: 'transparent',
+    border:          'none',
+    borderRadius:    '999px',
+    cursor:          'pointer',
+    WebkitTapHighlightColor: 'transparent',
+  },
+
+  // スクロールビューポート
+  chartScroll: {
+    position:               'relative',
+    width:                  '100%',
+    height:                 '360px',
+    WebkitOverflowScrolling: 'touch',
+    borderRadius:           '10px',
   },
   graphHint: {
     textAlign:  'center',
