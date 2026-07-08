@@ -236,7 +236,7 @@ export default function NakamaPage() {
     for (const n of data.nakama) {
       points.push({
         x:      n.total_practice_days,
-        y:      n.level,
+        y:      n.total_xp,            // ★ レベル → 累計経験値(XP) へ変更
         z:      100,
         isSelf: false,
         initial: firstChar(n.name),
@@ -248,7 +248,7 @@ export default function NakamaPage() {
     if (data.my_data) {
       points.push({
         x:      data.my_data.total_practice_days,
-        y:      data.my_data.level,
+        y:      data.my_data.total_xp,  // ★ レベル → 累計経験値(XP) へ変更
         z:      360, // 大きめのドット
         isSelf: true,
         initial: firstChar(data.my_data.name),
@@ -260,16 +260,28 @@ export default function NakamaPage() {
   }, [data]);
 
   // 軸レンジ（余白を持たせて見やすく）
+  // ★ Y軸は XP。値が大きくなり得るため、桁に応じてキリの良い上限へ丸める。
   const axisRange = useMemo(() => {
     if (scatterData.length === 0) {
-      return { xMax: 10, yMax: 10 };
+      return { xMax: 10, yMax: 100 };
     }
     const maxX = Math.max(...scatterData.map((p) => p.x));
     const maxY = Math.max(...scatterData.map((p) => p.y));
-    return {
-      xMax: Math.max(10, Math.ceil((maxX + 2) / 5) * 5),
-      yMax: Math.max(10, Math.ceil((maxY + 2) / 5) * 5),
-    };
+
+    // X（稽古日数）は従来どおり 5 刻みで丸める。
+    const xMax = Math.max(10, Math.ceil((maxX + 2) / 5) * 5);
+
+    // Y（XP）は最大値に約10%の余白を足し、桁に応じたキリの良い単位へ切り上げる。
+    const yPadded = maxY * 1.1;
+    // 丸め単位: 100未満→10, 1000未満→100, 10000未満→500, それ以上→1000。
+    const step =
+      yPadded < 100 ? 10
+      : yPadded < 1000 ? 100
+      : yPadded < 10000 ? 500
+      : 1000;
+    const yMax = Math.max(step, Math.ceil(yPadded / step) * step);
+
+    return { xMax, yMax };
   }, [scatterData]);
 
   // ---------------------------------------------------------------
@@ -473,15 +485,20 @@ export default function NakamaPage() {
                   <YAxis
                     type="number"
                     dataKey="y"
-                    name="レベル"
+                    name="累計経験値"
                     domain={[0, axisRange.yMax]}
                     tick={{ fill: THEME.textMuted, fontSize: 11 }}
                     stroke="rgba(255,255,255,0.25)"
+                    width={44}
+                    // ★ XPは桁が大きいので短縮表示（例: 1200 → 1.2k）。
+                    tickFormatter={(v: number) =>
+                      v >= 1000 ? `${(v / 1000).toFixed(1).replace(/\.0$/, '')}k` : String(v)
+                    }
                     label={{
-                      value:    'レベル',
+                      value:    '累計経験値（XP）',
                       angle:    -90,
                       position: 'insideLeft',
-                      offset:   16,
+                      offset:   12,
                       fill:     THEME.textSubtle,
                       fontSize: 12,
                     }}
