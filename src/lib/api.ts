@@ -1132,6 +1132,7 @@ export async function fetchTeacherDashboard(
     titleRes,
     taskRes,
     myEvalTodayRes,
+    xpHistoryRes,
   ] = await Promise.all([
     supabase.from('users').select('id, name, role, grade').eq('id', teacherId).single(),
     supabase.from('users').select('id, name, grade').eq('role', 'student'),
@@ -1151,6 +1152,8 @@ export async function fetchTeacherDashboard(
       .select('user_id')
       .eq('date', today)
       .eq('evaluator_id', teacherId),
+    // ★ 累計稽古日数（散布図の横軸）算出用
+    supabase.from('xp_history').select('user_id, date'),
   ]);
 
   throwIfError(teacherRes.error, 'fetchTeacherDashboard:teacher');
@@ -1160,14 +1163,28 @@ export async function fetchTeacherDashboard(
   throwIfError(titleRes.error, 'fetchTeacherDashboard:title_master');
   throwIfError(taskRes.error, 'fetchTeacherDashboard:task_master');
   throwIfError(myEvalTodayRes.error, 'fetchTeacherDashboard:my_eval_today');
+  throwIfError(xpHistoryRes.error, 'fetchTeacherDashboard:xp_history');
 
   if (!teacherRes.data) {
     throw new Error('先生ユーザーが見つかりません');
   }
 
+  const titleMaster: TitleMasterEntry[] = (titleRes.data ?? []).map((t) => ({
+    level: t.level,
+    title: t.title,
+  }));
+
   const statusMap = new Map(
     (statusRes.data ?? []).map((s) => [s.user_id, s]),
   );
+
+  // ユーザーごとの xp_history.date（累計稽古日数の集計用）
+  const historyDatesByUser = new Map<string, Array<string | null>>();
+  for (const h of xpHistoryRes.data ?? []) {
+    const arr = historyDatesByUser.get(h.user_id) ?? [];
+    arr.push(h.date);
+    historyDatesByUser.set(h.user_id, arr);
+  }
 
   // ★ 追加: 本日この先生が評価済みの生徒IDセット（重複防止フラグ用）
   const evaluatedTodayByMe = new Set(
@@ -1192,12 +1209,17 @@ export async function fetchTeacherDashboard(
       last != null
         ? Math.floor((now - new Date(last).getTime()) / (24 * 60 * 60 * 1000))
         : null;
+    const level = st?.level ?? 1;
     return {
       user_id:               u.id,
       name:                  u.name,
       grade:                 u.grade != null ? String(u.grade) : undefined,
-      level:                 st?.level ?? 1,
+      level,
       total_xp:              st?.total_xp ?? 0,
+      title:                 titleForLevel(level, titleMaster),
+      total_practice_days:   countUniquePracticeDays(
+        historyDatesByUser.get(u.id) ?? [],
+      ),
       last_practice_date:    last,
       techniquePoints:       techByUser.get(u.id) ?? { T001: 0, T002: 0, T003: 0 },
       daysSinceLastPractice: days,
@@ -1205,11 +1227,6 @@ export async function fetchTeacherDashboard(
       evaluated_today_by_me: evaluatedTodayByMe.has(u.id),
     };
   });
-
-  const titleMaster: TitleMasterEntry[] = (titleRes.data ?? []).map((t) => ({
-    level: t.level,
-    title: t.title,
-  }));
 
   const taskMaster: TaskMasterEntry[] = (taskRes.data ?? []).map((t) => ({
     id:            t.id,

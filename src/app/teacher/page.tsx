@@ -13,6 +13,7 @@ import { getAuthUser } from '@/lib/auth';
 import { THEME, TitleMasterEntry } from '@/types';
 
 import StudentListCard from '@/components/StudentListCard';
+import NakamaGraph, { type NakamaGraphEntry } from '@/components/NakamaGraph';
 
 type SortKey = 'name' | 'level' | 'recent' | 'pinch';
 
@@ -105,6 +106,23 @@ export default function TeacherHomePage() {
 
   const titleMaster: TitleMasterEntry[] = data?.titleMaster ?? [];
 
+  const graphEntries = useMemo((): NakamaGraphEntry[] => {
+    if (!data?.students) return [];
+    return data.students.map((s) => ({
+      user_id:               s.user_id,
+      name:                  s.name,
+      grade:                 s.grade,
+      level:                 s.level,
+      total_xp:              s.total_xp,
+      title:                 s.title ?? 'みならい剣士',
+      last_practice_date:    s.last_practice_date ?? null,
+      daysSinceLastPractice: s.daysSinceLastPractice,
+      total_practice_days:   s.total_practice_days ?? 0,
+      isBurning:
+        s.daysSinceLastPractice != null && s.daysSinceLastPractice <= 3,
+    }));
+  }, [data?.students]);
+
   // -----------------------------------------------------------------
   // ローディング
   // -----------------------------------------------------------------
@@ -174,6 +192,20 @@ export default function TeacherHomePage() {
               )}
             </div>
           </div>
+        </section>
+
+        {/* 門下生の修行マップ（散布図） */}
+        <section style={styles.graphSection}>
+          <div style={styles.graphSectionHead}>
+            <h2 style={styles.graphSectionTitle}>🔥 門下生の修行マップ</h2>
+            <p style={styles.graphSectionSub}>
+              累計稽古日数と経験値の分布を俯瞰して、指導の参考にしよう
+            </p>
+          </div>
+          <NakamaGraph
+            entries={graphEntries}
+            isTeacherMode
+          />
         </section>
 
         {/* ★ Step 1: 全体評価への入り口（一括評価ページへの遷移ボタン） */}
@@ -452,6 +484,31 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize:  '12px',
     color:     'rgba(255,255,255,0.75)',
     marginTop: '2px',
+  },
+
+  // === 修行マップ（散布図） ===
+  graphSection: {
+    display:       'flex',
+    flexDirection: 'column',
+    gap:           '10px',
+  },
+  graphSectionHead: {
+    padding: '0 2px',
+  },
+  graphSectionTitle: {
+    margin:        0,
+    fontSize:      '16px',
+    fontWeight:    900,
+    color:         '#FFD700',
+    letterSpacing: '0.05em',
+    textShadow:    '0 0 8px rgba(255,215,0,0.4)',
+  },
+  graphSectionSub: {
+    margin:     '4px 0 0',
+    fontSize:   '11px',
+    fontWeight: 700,
+    color:      'rgba(255,255,255,0.65)',
+    lineHeight: 1.5,
   },
 
   // === ★ Step 1 追加：全体評価ボタン ===

@@ -266,8 +266,12 @@ export interface StudentSummary {
   grade?:       string;
   level:        number;
   total_xp:     number;
+  /** 称号（title_master から導出・散布図ポップアップ等で使用） */
+  title?:       string;
   last_practice_date?: string | null;
-    /** 三角レーダー用の累計ポイント */
+  /** 累計稽古日数（xp_history の date ユニーク日数・散布図の横軸） */
+  total_practice_days?: number;
+  /** 三角レーダー用の累計ポイント */
   techniquePoints: {
     T001: number; // 面
     T002: number; // 小手
