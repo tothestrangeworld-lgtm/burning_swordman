@@ -15,6 +15,9 @@
  * ★ 見切りランキング（平均タイム / 最速タイム タブ切替 ＋ Recharts タイム推移グラフ）
  * ★ Y軸反転（reversed）で「速い＝上」表示
  * ★ Phase 6.2: ランキングを「平均タイム」「最速タイム」タブで切り替え（デフォルト＝平均）
+ * ★ Phase 6.3: 連打チート（Stale State 悪用）対策。
+ *     currentPhaseRef を唯一の同期的な真実として参照し、
+ *     handleTap を完全ホワイトリスト方式（okori/strike のみ有効）に刷新。
  * =====================================================================
  */
 
@@ -373,6 +376,19 @@ export default function StudentMiniGamePage() {
   const isInitializedRef = useRef(false);
   const isSubmittingRef  = useRef(false);
 
+  // ★ Phase 6.3: 連打チート（Stale State 悪用）対策の核。
+  //   phase(state) はレンダリングまで更新が反映されず、連打時に「前フェーズ」を
+  //   引きずったタップが通ってしまう。そこで setPhase を呼ぶ全箇所で同時に
+  //   このrefへ同期し、handleTap では必ずこのrefだけを判定に用いる。
+  const currentPhaseRef = useRef<GamePhase>('loading');
+
+  // ★ Phase 6.3: setPhase と currentPhaseRef.current を必ずセットで更新する
+  //   ためのヘルパー。以降、フェーズ遷移は原則これを経由する。
+  const updatePhase = useCallback((next: GamePhase) => {
+    currentPhaseRef.current = next;
+    setPhase(next);
+  }, []);
+
   useEffect(() => { roundIdxRef.current   = roundIdx;   }, [roundIdx]);
   useEffect(() => { matchCountRef.current = matchCount; }, [matchCount]);
 
@@ -393,15 +409,15 @@ export default function StudentMiniGamePage() {
         setMatchCount(status.todayPlayed);
         matchCountRef.current = status.todayPlayed;
         setBestTimeMs(status.bestTimeMs);
-        if (status.locked) setPhase('locked');
-        else setPhase('idle');
+        if (status.locked) updatePhase('locked');
+        else updatePhase('idle');
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         setErrorMessage(msg);
-        setPhase('error');
+        updatePhase('error');
       }
     })();
-  }, []);
+  }, [updatePhase]);
 
   // ★ ランキング取得
   const loadRanking = useCallback(async () => {
@@ -439,7 +455,10 @@ export default function StudentMiniGamePage() {
     } else {
       setFlashType('fail');
     }
-    setPhase('result');
+    // ★ Phase 6.3: result への遷移も ref を即時同期。
+    //   これにより、finishRound 直後の連打は currentPhaseRef.current === 'result'
+    //   と即座に判定され、ホワイトリスト外＝お手つき扱いになる（多重成功を防ぐ）。
+    updatePhase('result');
 
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
@@ -449,16 +468,16 @@ export default function StudentMiniGamePage() {
 
       const nextIdx = roundIdxRef.current + 1;
       if (nextIdx >= ROUNDS_PER_MATCH) {
-        setPhase('matchEnd');
+        updatePhase('matchEnd');
       } else {
         setRoundIdx(nextIdx);
         roundIdxRef.current = nextIdx;
-        setPhase('waiting');
+        updatePhase('waiting');
         scheduleNextRound();
       }
     }, 1700);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [updatePhase]);
 
   const handleTimeout = useCallback((pattern: Pattern) => {
     finishRound({
@@ -481,17 +500,18 @@ export default function StudentMiniGamePage() {
     okoriStartRef.current = null;
 
     timerRef.current = setTimeout(() => {
-      setPhase('pre_okori');
+      updatePhase('pre_okori');
 
       const preOkoriMs = randomBetween(1500, 3000);
       timerRef.current = setTimeout(() => {
         const pattern = pickRandomPattern();
         setCurrentPattern(pattern);
 
-        // ★ 計測起点は「setPhase('okori') の直前」に確実に確定させる。
+        // ★ 計測起点は「updatePhase('okori') の直前」に確実に確定させる。
         //   これにより okori 状態でタップされた時点では必ず起点が存在する。
         okoriStartRef.current = performance.now();
-        setPhase('okori');
+        // ★ Phase 6.3: ref を先に同期してから setPhase。
+        updatePhase('okori');
         setFlashType('okori');
 
         // ★ 野良 setTimeout を flashTimerRef で管理（リーク防止）
@@ -503,7 +523,7 @@ export default function StudentMiniGamePage() {
         //   焦らず正しい部位を押せるよう、900〜1600msに延長。
         const okoriMs = randomBetween(900, 1600);
         timerRef.current = setTimeout(() => {
-          setPhase('strike');
+          updatePhase('strike');
 
           timerRef.current = setTimeout(() => {
             handleTimeout(pattern);
@@ -511,11 +531,11 @@ export default function StudentMiniGamePage() {
         }, okoriMs);
       }, preOkoriMs);
     }, waitMs);
-  }, [handleTimeout]);
+  }, [handleTimeout, updatePhase]);
 
   const startMatch = useCallback(() => {
     if (matchCountRef.current >= MAX_MATCHES_PER_DAY) {
-      setPhase('locked');
+      updatePhase('locked');
       return;
     }
     setRoundIdx(0);
@@ -525,106 +545,133 @@ export default function StudentMiniGamePage() {
     setLastSaveResult(null);
     setErrorMessage('');
     setViewState('playing');
-    setPhase('waiting');
+    // ★ 立ち合い開始時にクールダウンもリセット（前回のペナルティを持ち越さない）
+    ignoreTapUntilRef.current = 0;
+    updatePhase('waiting');
     scheduleNextRound();
-  }, [scheduleNextRound]);
+  }, [scheduleNextRound, updatePhase]);
 
   // ===================================================================
-  // ★ 案A: タップハンドラ（okori中タップ＝必ず成功）
-  //   - waiting / pre_okori 中のタップ → フライング（即Fランク・タイム無効）
-  //   - 部位ミス → Fランク・タイム無効
-  //   - okori 中の正しい部位タップ
-  //       → 「相手の起こりを見切った」＝必ず成功
-  //         反応時間(ms)に応じて S/A/B/C を付与（遅くても最低Cで成功）
-  //   - strike 中（okoriを見切れず打突を許した）の正しい部位タップ
-  //       → 被弾扱いの失敗（Fランク）
+  // ★ Phase 6.3: 連打チート対策・完全ホワイトリスト方式の handleTap
+  //
+  //   【設計方針】
+  //   - 判定には phase(state) を一切使わず、必ず currentPhaseRef.current を参照する。
+  //     → React のステート更新遅延（Stale State）を突いた「前フェーズ引きずり」連打を無効化。
+  //
+  //   【判定順序】
+  //   1. クールダウン中（ignoreTapUntilRef）なら完全 return（無視）。
+  //   2. 有効打突フェーズ（okori / strike）＝ホワイトリストのみ通常処理。
+  //        - okori : 起こりを見切った → 部位正解なら必ず成功（S/A/B/C）
+  //        - strike: 打突を許した → 部位正解でも被弾失敗（Fランク）
+  //        - 部位ミス : Fランク失敗
+  //   3. 上記以外の【すべてのフェーズ】（waiting / pre_okori / result / idle /
+  //      matchEnd / submitting / locked / loading / error）でのタップは
+  //      即「お手つき（Fランク）」でラウンド失敗させ、2秒間のクールダウンを課す。
   // ===================================================================
   const handleTap = (part: HitPart) => {
-    // ── フライング連打防止クールダウン ──
+    // ── 1. 大前提のクールダウン ──
+    // ★ ペナルティ中・連打抑止中は一切受け付けない。
     if (Date.now() < ignoreTapUntilRef.current) return;
 
-    // ── タップ受付フェーズの厳格化 ──
-    // ★ okori / strike 以外は原則無視。waiting / pre_okori のみフライング（お手つき）として即失敗。
-    if (phase !== 'okori' && phase !== 'strike') {
-      if (phase === 'waiting' || phase === 'pre_okori') {
-        if (timerRef.current) clearTimeout(timerRef.current);
-        ignoreTapUntilRef.current = Date.now() + 2000;
-        const dummyPattern = pickRandomPattern();
+    // ★ 判定は必ず ref（同期的な最新フェーズ）で行う。
+    const activePhase = currentPhaseRef.current;
+
+    // ── 2. 有効打突フェーズ（ホワイトリスト） ──
+    if (activePhase === 'okori' || activePhase === 'strike') {
+      // 有効打突には必ずパターンが必要。無ければ不正扱いで下の厳罰へ流さず安全に無視。
+      if (!currentPattern) return;
+
+      if (timerRef.current) clearTimeout(timerRef.current);
+
+      const isCorrectPart = part === currentPattern.correctPart;
+
+      // ── 部位ミス → 失敗（タイム無効） ──
+      if (!isCorrectPart) {
         finishRound({
-          patternId:   dummyPattern.id,
+          patternId:   currentPattern.id,
           success:     false,
           reactionMs:  null,
-          successName: dummyPattern.successName,
-          failLabel:   'EARLY',
-          timing:      'tooEarly',
-          cutinText:   pickRandom(CUTIN_TOO_EARLY),
+          successName: currentPattern.successName,
+          failLabel:   'MISS',
+          timing:      'wrongPart',
+          cutinText:   pickRandom(CUTIN_FAIL),
           rank:        'F',
         });
+        return;
       }
+
+      // ── 正しい部位タップ ──
+      // ★ 敵が動き始めた瞬間（okoriStartRef）からの純粋な経過時間をミリ秒で計測。
+      //   起点が未確定（null）の場合は計測不能なので、0秒として記録せず処理を中断する。
+      //   ※ これが「記録が 0.000 秒になる」バグの直接原因だった。
+      if (okoriStartRef.current === null) {
+        return;
+      }
+      const reactionMs = performance.now() - okoriStartRef.current;
+      const reactionMsRounded = Math.round(reactionMs);
+
+      // ── strike フェーズ＝起こりを見切れず打突を許した → 被弾失敗（Fランク） ──
+      if (activePhase === 'strike') {
+        finishRound({
+          patternId:   currentPattern.id,
+          success:     false,
+          reactionMs:  reactionMsRounded, // 被弾タイムは記録（参考表示）
+          successName: currentPattern.successName,
+          failLabel:   currentPattern.failLabel,
+          timing:      'strike',
+          cutinText:   pickRandom(CUTIN_FAIL),
+          rank:        'F',
+        });
+        return;
+      }
+
+      // ── okori フェーズ＝起こりを見切った → 必ず成功 ──
+      // ★ 反応時間に応じて S/A/B/C を付与。
+      //   okori継続が長い回で600msを超えても、見切れている以上は最低Cで成功扱い。
+      let rank = judgeRankByReaction(reactionMsRounded);
+      if (rank === 'F') rank = 'C';
+
+      finishRound({
+        patternId:   currentPattern.id,
+        success:     true,
+        reactionMs:  reactionMsRounded,
+        successName: currentPattern.successName,
+        failLabel:   '',
+        timing:      'okori',
+        cutinText:   pickCutinByRank(rank),
+        rank,
+      });
       return;
     }
 
-    if (!currentPattern) return;
+    // ── 3. 不正なタイミングでのタップ（お手つき厳罰） ──
+    // ★ okori / strike 以外の【すべてのフェーズ】でのタップはチート/フライングとみなし、
+    //   即座に「お手つき（Fランク）」でラウンドを失敗終了させる。
+    //   さらに 2秒間はタップを一切受け付けない（連打による多重発火・すり抜けも封殺）。
     if (timerRef.current) clearTimeout(timerRef.current);
+    ignoreTapUntilRef.current = Date.now() + 2000;
 
-    const isCorrectPart = part === currentPattern.correctPart;
-
-    // ── 部位ミス → 失敗（タイム無効） ──
-    if (!isCorrectPart) {
+    // ★ result / matchEnd / submitting / locked / idle / loading / error など
+    //   「進行中の立ち合いに属さない」フェーズでの連打で
+    //   余計な失敗ラウンドを増殖させないためのガード。
+    //   お手つき失敗ラウンドとして数えるのは、実際に立ち合い進行中で
+    //   まだ結果確定していない waiting / pre_okori のときだけとする。
+    if (activePhase === 'waiting' || activePhase === 'pre_okori') {
+      const dummyPattern = pickRandomPattern();
       finishRound({
-        patternId:   currentPattern.id,
+        patternId:   dummyPattern.id,
         success:     false,
         reactionMs:  null,
-        successName: currentPattern.successName,
-        failLabel:   'MISS',
-        timing:      'wrongPart',
-        cutinText:   pickRandom(CUTIN_FAIL),
+        successName: dummyPattern.successName,
+        failLabel:   'EARLY',
+        timing:      'tooEarly',
+        cutinText:   pickRandom(CUTIN_TOO_EARLY),
         rank:        'F',
       });
-      return;
     }
-
-    // ── 正しい部位タップ ──
-    // ★ 敵が動き始めた瞬間（okoriStartRef）からの純粋な経過時間をミリ秒で計測。
-    //   起点が未確定（null）の場合は計測不能なので、0秒として記録せず処理を中断する。
-    //   ※ これが「記録が 0.000 秒になる」バグの直接原因だった。
-    if (okoriStartRef.current === null) {
-      return;
-    }
-    const reactionMs = performance.now() - okoriStartRef.current;
-    const reactionMsRounded = Math.round(reactionMs);
-
-    // ── strike フェーズ＝起こりを見切れず打突を許した → 被弾失敗（Fランク） ──
-    if (phase === 'strike') {
-      finishRound({
-        patternId:   currentPattern.id,
-        success:     false,
-        reactionMs:  reactionMsRounded, // 被弾タイムは記録（参考表示）
-        successName: currentPattern.successName,
-        failLabel:   currentPattern.failLabel,
-        timing:      'strike',
-        cutinText:   pickRandom(CUTIN_FAIL),
-        rank:        'F',
-      });
-      return;
-    }
-
-    // ── okori フェーズ＝起こりを見切った → 必ず成功 ──
-    // ★ 反応時間に応じて S/A/B/C を付与。
-    //   okori継続が長い回で600msを超えても、見切れている以上は最低Cで成功扱い。
-    let rank = judgeRankByReaction(reactionMsRounded);
-    if (rank === 'F') rank = 'C';
-
-    finishRound({
-      patternId:   currentPattern.id,
-      success:     true,
-      reactionMs:  reactionMsRounded,
-      successName: currentPattern.successName,
-      failLabel:   '',
-      timing:      'okori',
-      cutinText:   pickCutinByRank(rank),
-      rank,
-    });
+    // ★ それ以外（result 等）は「クールダウンを課すだけ」でラウンドは増やさない。
+    //   → result 中の連打は確実に無視され、Stale State を突いた不正成功が成立しない。
+    return;
   };
 
   const averageReaction = useMemo(() => {
@@ -644,7 +691,7 @@ export default function StudentMiniGamePage() {
     if (isSubmittingRef.current) return;
 
     isSubmittingRef.current = true;
-    setPhase('submitting');
+    updatePhase('submitting');
 
     (async () => {
       try {
@@ -657,11 +704,11 @@ export default function StudentMiniGamePage() {
         if (avgMs > 0 && (bestTimeMs === null || avgMs < bestTimeMs)) {
           setBestTimeMs(avgMs);
         }
-        setPhase('matchEnd');
+        updatePhase('matchEnd');
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         setErrorMessage(msg);
-        setPhase('matchEnd');
+        updatePhase('matchEnd');
       } finally {
         isSubmittingRef.current = false;
       }
@@ -672,7 +719,7 @@ export default function StudentMiniGamePage() {
   const handleBackToMenu = useCallback(() => {
     if (timerRef.current) clearTimeout(timerRef.current);
     setViewState('menu');
-    setPhase(matchCountRef.current >= MAX_MATCHES_PER_DAY ? 'locked' : 'idle');
+    updatePhase(matchCountRef.current >= MAX_MATCHES_PER_DAY ? 'locked' : 'idle');
     setResults([]);
     setLastResult(null);
     setLastSaveResult(null);
@@ -681,7 +728,9 @@ export default function StudentMiniGamePage() {
     roundIdxRef.current = 0;
     setFlashType('none');
     setCutinText('');
-  }, []);
+    // ★ メニュー復帰時にクールダウンもクリア。
+    ignoreTapUntilRef.current = 0;
+  }, [updatePhase]);
 
   const glowState = useMemo<{ part: HitPart | null; intensity: 'okori' | 'strike' | null }>(() => {
     if (!currentPattern) return { part: null, intensity: null };
