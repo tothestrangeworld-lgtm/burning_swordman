@@ -364,9 +364,10 @@ export default function StudentMiniGamePage() {
   // ★ Phase 6.2: ランキングのタブ状態。デフォルトは「平均タイム」。
   const [rankingTab, setRankingTab]         = useState<RankingTab>('average');
 
-  const okoriStartRef    = useRef<number | null>(null);
-  const timerRef         = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const flashTimerRef    = useRef<ReturnType<typeof setTimeout> | null>(null); // ★追加: フラッシュ消灯用タイマーを管理下に置く
+  const okoriStartRef       = useRef<number | null>(null);
+  const ignoreTapUntilRef   = useRef<number>(0);
+  const timerRef            = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashTimerRef       = useRef<ReturnType<typeof setTimeout> | null>(null); // ★追加: フラッシュ消灯用タイマーを管理下に置く
   const roundIdxRef      = useRef(0);
   const matchCountRef    = useRef(0);
   const isInitializedRef = useRef(false);
@@ -539,28 +540,31 @@ export default function StudentMiniGamePage() {
   //       → 被弾扱いの失敗（Fランク）
   // ===================================================================
   const handleTap = (part: HitPart) => {
-    // ── フライング（お手つき）判定 ──
-    // ★ 敵がまだ動き出していない無の間（waiting / pre_okori）のタップのみ即フライング失敗
-    //   okori 以降は有効打突として受け付けるため、ここには含めない
-    if (phase === 'waiting' || phase === 'pre_okori') {
-      if (timerRef.current) clearTimeout(timerRef.current);
-      const dummyPattern = pickRandomPattern();
-      finishRound({
-        patternId:   dummyPattern.id,
-        success:     false,
-        reactionMs:  null,
-        successName: dummyPattern.successName,
-        failLabel:   'EARLY',
-        timing:      'tooEarly',
-        cutinText:   pickRandom(CUTIN_TOO_EARLY),
-        rank:        'F',
-      });
+    // ── フライング連打防止クールダウン ──
+    if (Date.now() < ignoreTapUntilRef.current) return;
+
+    // ── タップ受付フェーズの厳格化 ──
+    // ★ okori / strike 以外は原則無視。waiting / pre_okori のみフライング（お手つき）として即失敗。
+    if (phase !== 'okori' && phase !== 'strike') {
+      if (phase === 'waiting' || phase === 'pre_okori') {
+        if (timerRef.current) clearTimeout(timerRef.current);
+        ignoreTapUntilRef.current = Date.now() + 2000;
+        const dummyPattern = pickRandomPattern();
+        finishRound({
+          patternId:   dummyPattern.id,
+          success:     false,
+          reactionMs:  null,
+          successName: dummyPattern.successName,
+          failLabel:   'EARLY',
+          timing:      'tooEarly',
+          cutinText:   pickRandom(CUTIN_TOO_EARLY),
+          rank:        'F',
+        });
+      }
       return;
     }
 
     if (!currentPattern) return;
-    // ★ 起こり（okori）と打突（strike）の両フェーズでタップを有効打突として受け付ける
-    if (phase !== 'okori' && phase !== 'strike') return;
     if (timerRef.current) clearTimeout(timerRef.current);
 
     const isCorrectPart = part === currentPattern.correctPart;
